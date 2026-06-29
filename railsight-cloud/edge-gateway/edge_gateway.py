@@ -1,3 +1,4 @@
+import os
 import socket, json, logging
 from datetime import datetime, timezone
 from awsiot import mqtt_connection_builder
@@ -7,7 +8,7 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s [GATEWAY] %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
 
-IOT_ENDPOINT = "a16j74wv9e0nbe-ats.iot.ca-central-1.amazonaws.com"
+IOT_ENDPOINT = os.getenv("IOT_ENDPOINT", "a16j74wv9e0nbe-ats.iot.ca-central-1.amazonaws.com")
 REQUIRED_FIELDS = {"assetId", "type", "status", "signalStrength", "timestamp", "sequenceNumber"}
 VALID_TYPES = {"locomotive", "wayside_detector", "radio_tower", "track_sensor"}
 
