@@ -1,8 +1,7 @@
 FROM python:3.12-slim
 
-WORKDIR /simulator
+WORKDIR /app
 
-COPY . .
+COPY simulator ./simulator
 
-CMD ["python", "simulate_assets.py"]
-
+CMD ["python", "simulator/simulate_assets.py"]

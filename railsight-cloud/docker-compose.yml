@@ -30,8 +30,10 @@ services:
       - RUNBOOKS_BUCKET=railsight-runbooks-yourname-2026
 
   simulator:
-    build: ./simulator
-    command: python simulate_assets.py --assets 30 --failure-rate 0.10 --interval 10
+    build:
+      context: .
+      dockerfile: simulator/Dockerfile
+    command: python simulator/simulate_assets.py --assets 6 --failure-rate 0.10 --interval 10
     environment:
       - GATEWAY_HOST=edge-gateway
       - GATEWAY_PORT=9000
