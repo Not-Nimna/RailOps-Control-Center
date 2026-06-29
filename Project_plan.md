@@ -2,12 +2,44 @@
 
 **A portfolio project built to match the CPKC Analyst Software Developer role.**
 **Architecture: Hybrid UDP Edge Gateway → AWS IoT Core → Serverless Backend → React Dashboard**
+**Runs entirely within the AWS Free Tier.**
+
+---
+
+## AWS Free Tier — What You're Using and Why It's Safe
+
+Before anything else, here is exactly what this project uses and why each service stays free:
+
+| Service         | Free Tier Limit                     | This Project's Usage                                | Safe?                                             |
+| --------------- | ----------------------------------- | --------------------------------------------------- | ------------------------------------------------- |
+| Lambda          | 1M requests/month, always free      | ~1 invocation per telemetry packet                  | ✅ Yes                                            |
+| DynamoDB        | 25 WCU / 25 RCU / 25GB, always free | 3 tables, ~3 writes/second during demos             | ✅ Yes                                            |
+| IoT Core        | 250K messages/month (12 months)     | ~65K messages per demo hour at recommended settings | ✅ Yes if you follow the simulator settings below |
+| S3              | 5GB / 2,000 PUTs/month (12 months)  | Runbooks only — 5–10 PUTs ever, done manually       | ✅ Yes                                            |
+| CloudWatch Logs | 5GB ingestion/month, always free    | Lambda logs only                                    | ✅ Yes                                            |
+| EventBridge     | 14M events/month, always free       | 1 event/minute for offline checker                  | ✅ Yes                                            |
+
+**What was removed and why:**
+
+- **Timestream** — no free tier at all. Charges per write, per query, and per GB stored. Replaced with a DynamoDB telemetry table using TTL (auto-expiry after 24 hours). Same data, zero cost.
+- **S3 events bucket** — the IoT Rule would write one file per telemetry packet. At 30 assets running for 2 hours, that's ~21,600 PUTs. Free tier only gives 2,000 per month. Removed. Raw event archiving is handled by CloudWatch Logs via Lambda instead.
+
+**One critical simulator setting for IoT Core free tier:**
+
+In AWS mode, the simulator must send every **10 seconds**, not every 2–5 seconds. At 10 seconds:
+
+```
+30 assets × 6 packets/minute = 180 packets/minute
+180 × 60 minutes × ~8 hours of demo time/month = ~86,400 messages
+```
+
+That's well under the 250K monthly free limit. For local UDP testing before AWS is involved, 2–5 seconds is fine.
 
 ---
 
 ## The One-Line Pitch
 
-RailSight Cloud simulates railway field assets (locomotives, wayside detectors, radios) sending UDP telemetry to a Python edge gateway, which validates and republishes events to AWS IoT Core over MQTT; cloud-side IoT Rules route data to Lambda, DynamoDB, and Timestream, while a FastAPI WebSocket backend serves a live React dashboard with AI-assisted incident troubleshooting from CloudWatch logs and S3 runbooks.
+RailSight Cloud simulates railway field assets sending UDP telemetry to a Python edge gateway, which validates and republishes to AWS IoT Core over MQTT; IoT Rules route data to Lambda and DynamoDB, a FastAPI WebSocket backend serves a live React dashboard, and an AI assistant provides grounded troubleshooting recommendations from CloudWatch logs and S3 runbooks — all within the AWS free tier.
 
 ---
 
@@ -15,11 +47,9 @@ RailSight Cloud simulates railway field assets (locomotives, wayside detectors, 
 
 Pure MQTT simulators are common in AWS tutorials. Pure UDP-to-local-API is what most monitoring demos do. This project does both, for a reason you can explain:
 
-> "Real railway field assets — locomotives, wayside detectors — speak industrial protocols like UDP and serial. They don't talk directly to the cloud. In the real world, a gateway device sits at the edge, collects that raw telemetry, validates it, and republishes it upstream. That's what the edge gateway component does here."
+> "Real railway field assets — locomotives, wayside detectors — speak industrial protocols like UDP and serial. They don't talk directly to the cloud. In the real world, a gateway device sits at the edge, collects raw telemetry, validates it, and republishes it upstream. That's what the edge gateway does here."
 
-That explanation alone distinguishes you from candidates who just did the AWS IoT getting-started tutorial.
-
-The hybrid also means you cover every CPKC keyword in one project: **UDP**, **TCP/IP**, **Python**, **Bash**, **cloud tools**, **real-time monitoring**, **automation**, and **Generative AI**.
+That explanation distinguishes you from candidates who just followed the AWS IoT getting-started tutorial.
 
 ---
 
@@ -28,9 +58,9 @@ The hybrid also means you cover every CPKC keyword in one project: **UDP**, **TC
 ```
 [Python Asset Simulator]
         |
-        |  UDP packets every 2-5 seconds to localhost:9000
+        |  UDP packets every 10 seconds (AWS mode)
         v
-[Python Edge Gateway]         ← validates, converts, republishes
+[Python Edge Gateway]         ← validates, converts UDP → MQTT
         |
         |  MQTT over TLS (port 8883)
         v
@@ -38,40 +68,28 @@ The hybrid also means you cover every CPKC keyword in one project: **UDP**, **TC
         |
         |  IoT Rule: SELECT * FROM 'railsight/assets/+/telemetry'
         v
-   ┌────┴──────────────────────────────────────────────┐
-   ↓                        ↓                          ↓
-[Lambda:               [Timestream:              [S3:
- Telemetry Processor]   telemetry history]        raw event archive]
-   |
-   |  upserts asset state, runs alert rules, updates Device Shadows
-   ↓
-[DynamoDB:             [DynamoDB:
- railsight-assets]      railsight-alerts]
+[Lambda: Telemetry Processor]
+        |
+   ┌────┴──────────────────────────────────┐
+   ↓                                       ↓
+[DynamoDB: railsight-assets]    [DynamoDB: railsight-telemetry]
+ current state per asset         every packet, TTL = 24 hours
+
+[DynamoDB: railsight-alerts]    [S3: railsight-runbooks]
+ active + resolved alerts        JSON runbook files (manual upload)
+
+[Lambda: Offline Checker]       ← EventBridge every 60 seconds
         |
         v
-[FastAPI Backend]      ← reads DynamoDB + Timestream, serves WebSocket
+[FastAPI Backend]               ← reads DynamoDB, serves WebSocket + REST
         |
-        |  WebSocket (real-time push to dashboard)
+        |  WebSocket
         v
 [React Dashboard]
         |
         v
-[Lambda: AI Assistant] ← CloudWatch Logs + Timestream + S3 Runbooks
+[Lambda: AI Assistant]          ← CloudWatch Logs + DynamoDB + S3 runbooks
 ```
-
-### Why each AWS service
-
-| Service              | What It Replaces              | Why It's the Right Tool                                                                          |
-| -------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------ |
-| AWS IoT Core         | Raw UDP listener in FastAPI   | Built for field-device telemetry ingestion at scale; Device Shadow state management included     |
-| IoT Rules            | Manual routing code           | Declarative SQL-style rules that fan out to multiple targets without code                        |
-| Lambda (processor)   | FastAPI background alert loop | Event-driven; fires immediately on every packet, not on a 30-second poll                         |
-| Lambda (EventBridge) | Asyncio scheduled task        | Detects _absence_ of packets (ASSET_OFFLINE rule) on a 1-minute cron                             |
-| DynamoDB             | PostgreSQL                    | No server to manage; millisecond reads for WebSocket push; free tier covers the whole project    |
-| Timestream           | PostgreSQL asset_events table | Purpose-built time-series DB; native Grafana/QuickSight integration for the analytics page       |
-| S3                   | PostgreSQL runbooks table     | Correct place for documents; easy to add/update runbooks without a DB migration                  |
-| CloudWatch Logs      | Local OpenSearch              | Lambda logs go here automatically; Log Insights queries match the "Elastic/Dynatrace" JD mention |
-| Device Shadows       | assets.current_state column   | IoT-native last-known-state store; survives reconnects and gaps in telemetry                     |
 
 ---
 
@@ -81,12 +99,12 @@ The hybrid also means you cover every CPKC keyword in one project: **UDP**, **TC
 | ------------------------- | --------------------------------------- | ------------------------------------------ |
 | Asset simulator           | Python (UDP sockets)                    | Python, UDP, field systems                 |
 | Edge gateway              | Python (AWS IoT Device SDK, MQTT)       | Python, TCP/IP, MQTT, networking protocols |
-| Cloud telemetry ingestion | AWS IoT Core                            | Cloud tools, field systems, networking     |
+| Cloud telemetry ingestion | AWS IoT Core                            | Cloud tools, field systems                 |
 | Alert engine              | Python Lambda + EventBridge             | Python, automation, monitoring             |
-| Asset state store         | DynamoDB                                | Data platforms, cloud                      |
-| Telemetry history         | Timestream                              | Time-series, data platforms                |
+| Asset state store         | DynamoDB (`railsight-assets`)           | Data platforms, cloud                      |
+| Telemetry history         | DynamoDB (`railsight-telemetry`) + TTL  | Time-series, data platforms                |
 | Structured logging        | CloudWatch Logs + Log Insights          | Elastic, Dynatrace, monitoring             |
-| Raw archive               | S3                                      | Cloud storage                              |
+| Runbook store             | S3 (`railsight-runbooks`)               | Cloud storage                              |
 | REST + WebSocket API      | Python FastAPI                          | Python, real-time monitoring               |
 | Frontend dashboard        | React + TypeScript + Recharts + Leaflet | Single pane of glass                       |
 | AI assistant              | Claude API (RAG over logs + runbooks)   | Generative AI, decision-making             |
@@ -97,18 +115,12 @@ The hybrid also means you cover every CPKC keyword in one project: **UDP**, **TC
 
 ## MQTT Topic Structure
 
-All assets publish under a consistent topic hierarchy:
-
 ```
-railsight/assets/{assetId}/telemetry     ← live telemetry packets
-railsight/assets/{assetId}/alerts        ← alert notifications (Lambda publishes back)
+railsight/assets/{assetId}/telemetry     ← live telemetry from edge gateway
+railsight/assets/{assetId}/alerts        ← Lambda publishes alerts back to IoT Core
 railsight/system/health                  ← edge gateway heartbeat
-```
 
-AWS Device Shadow (managed by IoT Core automatically):
-
-```
-$aws/things/{assetId}/shadow/update      ← last known state, survives gaps
+$aws/things/{assetId}/shadow/update      ← Device Shadow (last known state)
 ```
 
 ---
@@ -136,45 +148,82 @@ Asset types: `locomotive`, `wayside_detector`, `radio_tower`, `track_sensor`
 
 ---
 
-## AWS Infrastructure (Set Up Before Writing Code)
+## AWS Infrastructure Setup (Do This First, Before Writing Code)
 
-Create these manually in the AWS Console or with a setup script before Phase 1.
-Region: `ca-central-1` (Calgary — aligns with the CPKC role location).
+Region: `ca-central-1`. Do this in order.
 
-**IoT Core**
+**Step 1 — DynamoDB tables**
 
-- Thing Type: `railway-asset`
-- Things: Create one per asset type for the demo (LOCO-5821, WAYSIDE-104, etc.)
-- Certificate: One certificate for the edge gateway (not per-device, to keep setup simple)
-- IoT Rule: `RailSightTelemetryRule`
+Create three tables with default settings (provisioned, 5 RCU / 5 WCU each — all within free tier):
 
-```sql
+`railsight-assets`
+
+- Partition key: `assetId` (String)
+- Stores current state — one row per asset, upserted on every packet
+
+`railsight-telemetry`
+
+- Partition key: `assetId` (String)
+- Sort key: `timestamp` (String)
+- Enable TTL on attribute `expiresAt` (Number)
+- This replaces Timestream — stores every telemetry packet, auto-deleted after 24 hours
+
+`railsight-alerts`
+
+- Partition key: `alertId` (String)
+- Sort key: `timestamp` (String)
+
+**Step 2 — S3 bucket (runbooks only)**
+
+Create one bucket: `railsight-runbooks-{yourname}-2026`
+
+This bucket only ever receives ~5–10 manual PUTs (one per runbook file you upload). No IoT Rule writes to it. Well within free tier.
+
+Keep all defaults from the S3 creation screen — SSE-S3 encryption, ACLs disabled, block all public access.
+
+**Step 3 — AWS IoT Core**
+
+- Create a Thing Type called `railway-asset`
+- Create one certificate for the edge gateway (not per-device)
+- Download: `edge-gateway.cert.pem`, `edge-gateway.private.key`, `root-CA.crt`
+- Attach a policy to the certificate that allows:
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": ["iot:Publish", "iot:Connect"],
+    "Resource": "arn:aws:iot:ca-central-1:*:topic/railsight/*"
+  }
+  ```
+- Create IoT Rule `RailSightTelemetryRule`:
+  ```sql
   SELECT * FROM 'railsight/assets/+/telemetry'
-```
+  ```
+  One action: → Lambda (`railsight-telemetry-processor`)
+  When prompted, let the console create a new IAM role — it auto-generates the correct permissions.
 
-Actions: → Lambda (processor), → Timestream (telemetry table), → S3 (raw archive)
+**Step 4 — Lambda functions**
 
-**DynamoDB**
+Create three functions (Python 3.12):
 
-- Table `railsight-assets`: partition key = `assetId` (String)
-- Table `railsight-alerts`: partition key = `alertId` (String), sort key = `timestamp` (String)
-- Enable DynamoDB Streams on `railsight-alerts` (for future WebSocket push)
-  **Timestream**
-- Database: `railsight`
-- Table: `telemetry`
-  - Memory store retention: 1 day
-  - Magnetic store retention: 7 days
-  - Dimensions: `assetId`, `type`, `radioChannel`
-  - Measures: `speed`, `signalStrength`, `batteryLevel`, `latitude`, `longitude`
-    **S3**
-- Bucket: `railsight-runbooks` — stores JSON runbook files
-- Bucket: `railsight-events` — IoT Rule writes raw telemetry here (one JSON per event)
-  **Lambda**
-- Function `railsight-telemetry-processor`: Python 3.12, triggered by IoT Rule
-- Function `railsight-offline-checker`: Python 3.12, triggered by EventBridge every 60 seconds
-- Function `railsight-ai-assistant`: Python 3.12, triggered by FastAPI HTTP call
-  **IAM**
-- Lambda execution role: DynamoDB read/write, Timestream write, IoT publish, S3 read, CloudWatch Logs write
+- `railsight-telemetry-processor` — triggered by IoT Rule
+- `railsight-offline-checker` — triggered by EventBridge (rate: 1 minute)
+- `railsight-ai-assistant` — triggered by FastAPI HTTP call (URL not needed; invoke via boto3)
+
+IAM role for all Lambda functions needs:
+
+- `dynamodb:PutItem`, `dynamodb:GetItem`, `dynamodb:Query`, `dynamodb:UpdateItem`, `dynamodb:Scan` on all three tables
+- `s3:GetObject` on `railsight-runbooks-*`
+- `iot:Publish` on `railsight/*`
+- `logs:CreateLogGroup`, `logs:CreateLogDelivery`, `logs:PutLogEvents` (CloudWatch — auto-added by Lambda console)
+- `iot:UpdateThingShadow` on all things
+
+**Step 5 — EventBridge rule**
+
+Create a rule with a schedule: `rate(1 minute)`. Target: `railsight-offline-checker` Lambda.
+
+**Verify before writing any application code:**
+
+Go to IoT Core → MQTT test client → subscribe to `railsight/assets/#`. Publish a manual test message to `railsight/assets/LOCO-5821/telemetry`. Check the Lambda CloudWatch logs confirm the function was invoked. Check DynamoDB `railsight-assets` shows a row for `LOCO-5821`. If this works, your cloud pipeline is confirmed.
 
 ---
 
@@ -184,30 +233,27 @@ Actions: → Lambda (processor), → Timestream (telemetry table), → S3 (raw a
 
 Build the data pipeline end to end. Nothing visual yet.
 
-**Day 1–2: AWS setup**
-Complete the infrastructure above. Verify IoT Core is receiving test messages using the MQTT test client in the AWS Console before writing any application code. This step is non-negotiable — debugging AWS config inside your application code is painful.
-
-**Day 2–3: UDP Asset Simulator (`simulate_assets.py`)**
+**UDP Asset Simulator (`simulate_assets.py`)**
 
 ```python
 import socket, json, random, time, threading, argparse
+from datetime import datetime, timezone
 
-ASSET_TYPES = ['locomotive', 'wayside_detector', 'radio_tower', 'track_sensor']
 GATEWAY_HOST = '127.0.0.1'
 GATEWAY_PORT = 9000
+ASSET_TYPES = ['locomotive', 'wayside_detector', 'radio_tower', 'track_sensor']
 
-def simulate_asset(asset_id, asset_type, failure_rate):
+def simulate_asset(asset_id, asset_type, failure_rate, interval_seconds):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     seq = 0
     signal = 85.0
     speed = random.uniform(40, 80) if asset_type == 'locomotive' else 0
 
     while True:
-        # Inject failure scenarios
         if random.random() < failure_rate:
-            signal = max(10, signal - random.uniform(15, 30))  # signal drop
+            signal = max(10, signal - random.uniform(15, 30))
         else:
-            signal = min(95, signal + random.uniform(0, 5))   # recovery
+            signal = min(95, signal + random.uniform(0, 5))
 
         packet = {
             "assetId": asset_id,
@@ -216,44 +262,82 @@ def simulate_asset(asset_id, asset_type, failure_rate):
             "speed": round(speed + random.uniform(-2, 2), 1) if asset_type == 'locomotive' else 0,
             "gps": [51.0447 + random.uniform(-0.5, 0.5), -114.0719 + random.uniform(-2, 2)],
             "signalStrength": round(signal, 1),
-            "batteryLevel": random.uniform(70, 100),
+            "batteryLevel": round(random.uniform(70, 100), 1),
             "sequenceNumber": seq,
             "radioChannel": f"CH-{random.randint(1, 5)}",
-            "timestamp": datetime.utcnow().isoformat() + "Z"
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         sock.sendto(json.dumps(packet).encode(), (GATEWAY_HOST, GATEWAY_PORT))
         seq += 1
-        time.sleep(random.uniform(2, 5))
+        time.sleep(interval_seconds)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--assets', type=int, default=30)
+    parser.add_argument('--failure-rate', type=float, default=0.10)
+    parser.add_argument('--interval', type=float, default=10.0,
+                        help='Seconds between packets. Use 10+ for AWS mode (free tier).')
+    parser.add_argument('--force-fail', type=str, help='Asset ID to force into failure')
+    parser.add_argument('--fail-type', type=str, default='signal_drop')
+    args = parser.parse_args()
+
+    print(f"Starting {args.assets} assets | interval={args.interval}s | failure-rate={args.failure_rate}")
+    print(f"Estimated IoT Core messages/hour: {args.assets * (3600 / args.interval):.0f}")
+
+    threads = []
+    for i in range(args.assets):
+        asset_type = ASSET_TYPES[i % len(ASSET_TYPES)]
+        asset_id = f"{asset_type.upper().replace('_','-')}-{1000 + i}"
+        t = threading.Thread(target=simulate_asset,
+                             args=(asset_id, asset_type, args.failure_rate, args.interval))
+        t.daemon = True
+        t.start()
+        threads.append(t)
+
+    for t in threads:
+        t.join()
 ```
 
-Run with: `python simulate_assets.py --assets 30 --failure-rate 0.10`
+Usage:
 
-Also support: `python simulate_assets.py --force-fail LOCO-5821 --type signal_drop`
+```bash
+# AWS mode (free tier safe)
+python simulate_assets.py --assets 30 --failure-rate 0.10 --interval 10
 
-**Day 3–4: Python Edge Gateway (`edge_gateway.py`)**
+# Local testing (fast, no AWS)
+python simulate_assets.py --assets 30 --failure-rate 0.10 --interval 2
 
-This is the most architecturally interesting piece. It's a small but real piece of systems design.
+# Force a failure for demo
+python simulate_assets.py --force-fail LOCO-1000 --fail-type signal_drop --interval 10
+```
+
+**Python Edge Gateway (`edge_gateway.py`)**
 
 ```python
 import socket, json, logging
+from datetime import datetime, timezone
 from awsiot import mqtt_connection_builder
 from awscrt import mqtt
 
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s [GATEWAY] %(levelname)s %(message)s')
+logger = logging.getLogger(__name__)
+
 IOT_ENDPOINT = "your-endpoint.iot.ca-central-1.amazonaws.com"
 REQUIRED_FIELDS = {"assetId", "type", "status", "signalStrength", "timestamp", "sequenceNumber"}
+VALID_TYPES = {"locomotive", "wayside_detector", "radio_tower", "track_sensor"}
 
-def validate_packet(packet: dict) -> tuple[bool, str]:
+def validate(packet):
     missing = REQUIRED_FIELDS - set(packet.keys())
     if missing:
         return False, f"Missing fields: {missing}"
-    if packet['signalStrength'] < 0 or packet['signalStrength'] > 100:
-        return False, "signalStrength out of range"
-    if packet['type'] not in VALID_ASSET_TYPES:
-        return False, f"Unknown asset type: {packet['type']}"
+    if not 0 <= packet['signalStrength'] <= 100:
+        return False, f"signalStrength out of range: {packet['signalStrength']}"
+    if packet['type'] not in VALID_TYPES:
+        return False, f"Unknown type: {packet['type']}"
     return True, "ok"
 
-def run_gateway():
-    # MQTT connection to IoT Core
+def run():
     mqtt_conn = mqtt_connection_builder.mtls_from_path(
         endpoint=IOT_ENDPOINT,
         cert_filepath="certs/edge-gateway.cert.pem",
@@ -262,64 +346,75 @@ def run_gateway():
         client_id="railsight-edge-gateway"
     )
     mqtt_conn.connect().result()
-    logger.info("Edge gateway connected to AWS IoT Core")
+    logger.info("Connected to AWS IoT Core")
 
-    # UDP socket for receiving from simulator
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_sock.bind(('0.0.0.0', 9000))
-    logger.info("Listening for UDP telemetry on :9000")
+    logger.info("Listening for UDP on :9000")
 
-    seen_sequences = {}   # for duplicate detection
+    seen_sequences = {}
+    packets_forwarded = 0
+    packets_rejected = 0
 
     while True:
         data, addr = udp_sock.recvfrom(4096)
         try:
             packet = json.loads(data.decode())
-            valid, reason = validate_packet(packet)
+            valid, reason = validate(packet)
 
             if not valid:
-                logger.warning(f"Malformed packet from {addr}: {reason} | raw: {data[:100]}")
+                packets_rejected += 1
+                logger.warning(f"REJECTED from {addr}: {reason}")
                 continue
 
-            # Duplicate sequence check
             asset_id = packet['assetId']
             seq = packet['sequenceNumber']
-            if asset_id in seen_sequences and seq in seen_sequences[asset_id]:
-                logger.warning(f"Duplicate sequence {seq} from {asset_id}")
-                # Still publish but tag it
+            is_duplicate = seq in seen_sequences.get(asset_id, set())
+
+            if is_duplicate:
+                logger.warning(f"DUPLICATE seq={seq} from {asset_id}")
                 packet['_duplicate'] = True
             else:
                 seen_sequences.setdefault(asset_id, set()).add(seq)
 
             topic = f"railsight/assets/{asset_id}/telemetry"
-            mqtt_conn.publish(
-                topic=topic,
-                payload=json.dumps(packet),
-                qos=mqtt.QoS.AT_LEAST_ONCE
-            )
+            mqtt_conn.publish(topic=topic, payload=json.dumps(packet),
+                              qos=mqtt.QoS.AT_LEAST_ONCE)
+
+            packets_forwarded += 1
+            if packets_forwarded % 100 == 0:
+                logger.info(f"Forwarded {packets_forwarded} packets | Rejected {packets_rejected}")
 
         except json.JSONDecodeError as e:
             logger.error(f"JSON parse error from {addr}: {e}")
+
+if __name__ == "__main__":
+    run()
 ```
 
-**Day 4–5: Lambda Telemetry Processor**
+**Lambda: Telemetry Processor**
 
-Triggered by the IoT Rule on every valid telemetry packet:
+This is the core of the cloud pipeline. Triggered by IoT Rule on every valid packet:
 
 ```python
-import boto3, json
+import boto3, json, os
 from datetime import datetime, timezone
 
-dynamodb = boto3.resource('dynamodb')
+dynamodb = boto3.resource('dynamodb', region_name='ca-central-1')
 iot_data = boto3.client('iot-data', region_name='ca-central-1')
 
 assets_table = dynamodb.Table('railsight-assets')
+telemetry_table = dynamodb.Table('railsight-telemetry')
 alerts_table = dynamodb.Table('railsight-alerts')
+
+TTL_SECONDS = 86400   # 24 hours — keeps DynamoDB small and free
 
 def handler(event, context):
     asset_id = event['assetId']
+    now = datetime.now(timezone.utc)
+    expires_at = int(now.timestamp()) + TTL_SECONDS
 
-    # 1. Upsert current asset state in DynamoDB
+    # 1. Upsert current state
     assets_table.put_item(Item={
         'assetId': asset_id,
         'type': event['type'],
@@ -331,128 +426,171 @@ def handler(event, context):
         'radioChannel': event.get('radioChannel', 'unknown'),
         'lastSeen': event['timestamp'],
         'sequenceNumber': event['sequenceNumber'],
-        'updatedAt': datetime.now(timezone.utc).isoformat()
+        'updatedAt': now.isoformat()
     })
 
-    # 2. Run alert rules
-    run_alert_rules(event)
+    # 2. Write to telemetry history (replaces Timestream)
+    #    TTL auto-deletes after 24 hours — keeps DynamoDB usage minimal
+    telemetry_table.put_item(Item={
+        'assetId': asset_id,
+        'timestamp': event['timestamp'],
+        'status': event['status'],
+        'speed': str(event.get('speed', 0)),
+        'signalStrength': str(event['signalStrength']),
+        'batteryLevel': str(event.get('batteryLevel', 100)),
+        'latitude': str(event['gps'][0]) if event.get('gps') else '0',
+        'longitude': str(event['gps'][1]) if event.get('gps') else '0',
+        'expiresAt': expires_at    # DynamoDB TTL attribute
+    })
 
-    # 3. Update Device Shadow (last known good state)
-    iot_data.update_thing_shadow(
-        thingName=asset_id,
-        payload=json.dumps({
-            "state": {
-                "reported": {
-                    "status": event['status'],
-                    "signalStrength": event['signalStrength'],
-                    "gps": event.get('gps'),
-                    "lastSeen": event['timestamp']
+    # 3. Run alert rules
+    run_alert_rules(event, now)
+
+    # 4. Update Device Shadow
+    try:
+        iot_data.update_thing_shadow(
+            thingName=asset_id,
+            payload=json.dumps({
+                "state": {
+                    "reported": {
+                        "status": event['status'],
+                        "signalStrength": event['signalStrength'],
+                        "gps": event.get('gps'),
+                        "lastSeen": event['timestamp']
+                    }
                 }
-            }
-        })
-    )
+            })
+        )
+    except Exception as e:
+        print(f"Shadow update failed for {asset_id}: {e}")
 
-def run_alert_rules(event):
+def run_alert_rules(event, now):
     asset_id = event['assetId']
     signal = float(event['signalStrength'])
     speed = float(event.get('speed', 0))
 
     if signal < 40:
-        create_alert(asset_id, "LOW_SIGNAL", "P1" if signal < 20 else "P2",
-                     f"Signal at {signal}%. Verify radio channel and antenna.")
+        severity = "P1" if signal < 20 else "P2"
+        create_alert(asset_id, "LOW_SIGNAL", severity,
+                     f"Signal at {signal}%. Verify radio channel and antenna.", now)
 
     if event['type'] == 'locomotive' and speed == 0:
-        # Check if speed was > 0 in previous packet
         prev = assets_table.get_item(Key={'assetId': asset_id}).get('Item', {})
         if float(prev.get('speed', 0)) > 5:
             create_alert(asset_id, "UNEXPECTED_STOP", "P1",
-                         "Locomotive stopped unexpectedly. Contact engineer.")
+                         "Locomotive stopped unexpectedly. Contact engineer directly.", now)
 
     if event.get('_duplicate'):
         create_alert(asset_id, "DUPLICATE_TELEMETRY", "P3",
-                     f"Duplicate sequence {event['sequenceNumber']} received.")
+                     f"Duplicate sequence {event['sequenceNumber']} from {asset_id}.", now)
 
-def create_alert(asset_id, rule, severity, suggested_action):
-    alert_id = f"{asset_id}-{rule}-{int(datetime.now().timestamp())}"
+def create_alert(asset_id, rule, severity, suggested_action, now):
+    alert_id = f"{asset_id}-{rule}-{int(now.timestamp())}"
     alerts_table.put_item(Item={
         'alertId': alert_id,
         'assetId': asset_id,
         'rule': rule,
         'severity': severity,
         'suggestedAction': suggested_action,
-        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'timestamp': now.isoformat(),
         'acknowledged': False,
         'resolvedAt': None
     })
+    print(f"ALERT created: {severity} {rule} for {asset_id}")
 ```
 
-**Day 5–7: Lambda Offline Checker (EventBridge every 60s)**
-
-The LOW_SIGNAL and UNEXPECTED_STOP rules fire when a packet _arrives_. But ASSET_OFFLINE fires when packets _stop_. This requires a separate scheduled checker:
+**Lambda: Offline Checker (EventBridge every 60s)**
 
 ```python
+from datetime import datetime, timezone
+import boto3
+
+dynamodb = boto3.resource('dynamodb', region_name='ca-central-1')
+assets_table = dynamodb.Table('railsight-assets')
+
 def handler(event, context):
     now = datetime.now(timezone.utc)
     assets = assets_table.scan()['Items']
 
     for asset in assets:
-        last_seen = datetime.fromisoformat(asset['lastSeen'].replace('Z', '+00:00'))
+        last_seen_str = asset.get('lastSeen', '')
+        if not last_seen_str:
+            continue
+        last_seen = datetime.fromisoformat(last_seen_str.replace('Z', '+00:00'))
         seconds_since = (now - last_seen).total_seconds()
 
-        if seconds_since > 300:   # 5 minutes
+        if seconds_since > 300:    # 5 minutes
             create_alert(
-                asset['assetId'],
-                "ASSET_OFFLINE",
-                "P1",
-                f"No telemetry for {int(seconds_since)}s. Check power and connectivity."
+                asset['assetId'], "ASSET_OFFLINE", "P1",
+                f"No telemetry for {int(seconds_since)}s. Check power, radio, and last GPS position.",
+                now
             )
+            print(f"OFFLINE: {asset['assetId']} — last seen {int(seconds_since)}s ago")
 ```
 
-**Goal for Phase 1:** Simulator → gateway → IoT Core → Lambda → DynamoDB/Timestream. Verify in DynamoDB console (items appearing), Timestream query editor (data rows), and S3 bucket (raw JSON files). Device shadows updating. No frontend yet.
+**Goal for Phase 1:** Simulator → gateway → IoT Core → Lambda. Verify in DynamoDB console: rows in `railsight-assets` and `railsight-telemetry`. Check CloudWatch Logs for Lambda to confirm invocations. No frontend yet.
 
 ---
 
 ### Phase 2 — FastAPI Backend + WebSocket Streaming (Days 8–13)
 
-FastAPI no longer touches a database directly. It reads from DynamoDB and Timestream and broadcasts to the React frontend via WebSocket.
+FastAPI reads from DynamoDB. All history that previously came from Timestream now comes from `railsight-telemetry`.
+
+**Telemetry history endpoint (replaces Timestream query)**
+
+```python
+from boto3.dynamodb.conditions import Key
+from decimal import Decimal
+import json
+
+def decimal_to_float(obj):
+    """DynamoDB returns Decimals — convert for JSON serialization."""
+    if isinstance(obj, Decimal):
+        return float(obj)
+    raise TypeError
+
+@app.get("/assets/{asset_id}/history")
+async def get_asset_history(asset_id: str, limit: int = 20):
+    response = telemetry_table.query(
+        KeyConditionExpression=Key('assetId').eq(asset_id),
+        ScanIndexForward=False,   # newest first
+        Limit=limit
+    )
+    return json.loads(json.dumps(response['Items'], default=decimal_to_float))
+```
 
 **REST endpoints**
 
 ```python
 @app.get("/assets")
 async def get_assets():
-    # Scan DynamoDB railsight-assets
-    return dynamodb.Table('railsight-assets').scan()['Items']
+    items = assets_table.scan()['Items']
+    return json.loads(json.dumps(items, default=decimal_to_float))
 
 @app.get("/assets/{asset_id}/history")
-async def get_asset_history(asset_id: str, hours: int = 6):
-    # Query Timestream for the last N hours of telemetry for this asset
-    query = f"""
-        SELECT time, signalStrength, speed, batteryLevel
-        FROM "railsight"."telemetry"
-        WHERE assetId = '{asset_id}'
-        AND time > ago({hours}h)
-        ORDER BY time ASC
-    """
-    return timestream_query.query(QueryString=query)['Rows']
+async def get_asset_history(asset_id: str, limit: int = 20):
+    # Query railsight-telemetry, sorted newest-first
+    ...
 
 @app.get("/alerts")
 async def get_alerts(severity: str = None, acknowledged: bool = None):
-    # Query DynamoDB railsight-alerts with optional filters
+    # Scan railsight-alerts with optional filter expression
     ...
 
 @app.post("/alerts/{alert_id}/acknowledge")
-async def acknowledge_alert(alert_id: str):
+async def acknowledge_alert(alert_id: str, timestamp: str):
     alerts_table.update_item(
-        Key={'alertId': alert_id},
+        Key={'alertId': alert_id, 'timestamp': timestamp},
         UpdateExpression='SET acknowledged = :val',
         ExpressionAttributeValues={':val': True}
     )
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 ```
 
-**WebSocket endpoint**
-
-FastAPI polls DynamoDB every 3 seconds and pushes any changes to all connected clients:
+**WebSocket — polls DynamoDB every 3 seconds**
 
 ```python
 @app.websocket("/ws")
@@ -460,12 +598,14 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            assets = await fetch_current_assets()
-            alerts = await fetch_active_alerts()
+            assets = assets_table.scan()['Items']
+            alerts = alerts_table.scan(
+                FilterExpression=Attr('acknowledged').eq(False)
+            )['Items']
             await websocket.send_json({
                 "type": "state_update",
-                "assets": assets,
-                "alerts": alerts,
+                "assets": json.loads(json.dumps(assets, default=decimal_to_float)),
+                "alerts": json.loads(json.dumps(alerts, default=decimal_to_float)),
                 "timestamp": datetime.utcnow().isoformat()
             })
             await asyncio.sleep(3)
@@ -473,54 +613,86 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
 ```
 
-**Goal for Phase 2:** All REST endpoints return live data from DynamoDB/Timestream. WebSocket connection pushes updates every 3 seconds. Test with `wscat -c ws://localhost:8000/ws`.
+**Goal for Phase 2:** All endpoints return live DynamoDB data. WebSocket pushes updates. Test with `wscat -c ws://localhost:8000/ws` and watch JSON arrive every 3 seconds.
 
 ---
 
 ### Phase 3 — React Dashboard (Days 14–22)
 
-This is what the recruiter sees. Invest time here.
-
 **Asset Map (Leaflet)**
 
-- Plot all assets on a map of the Canadian prairies (centre on Calgary)
+- Plot all assets on a map centred on Calgary (51.0447, -114.0719)
 - Color-coded markers: Green (healthy), Yellow (warning), Red (critical), Grey (offline)
-- Marker icon changes based on asset type: train icon for locomotive, antenna for radio, etc.
-- Click a marker → open asset detail panel on the right
-  **Alert Feed (right sidebar)**
-- Live list of active alerts from the WebSocket state update, ordered by severity
-- P1 = red badge, P2 = orange badge, P3 = yellow badge
-- Acknowledge button per alert (calls `POST /alerts/{id}/acknowledge`)
-- Filters: All / P1 only / Unacknowledged / By asset type
-  **Asset Detail Panel**
-- Current telemetry from DynamoDB: speed, signal strength, GPS, battery, radio channel
-- Signal strength over time: line chart (Recharts) from Timestream `/history` endpoint
-- Device Shadow status badge: "Shadow in sync" or "Shadow stale"
-- Incident timeline (see below)
-  **Incident Timeline (per asset)**
+- Different icons per asset type — train for locomotive, antenna for radio tower, sensor for wayside
+- Click marker → asset detail panel opens on the right
 
-Built from a `GET /assets/{id}/events` endpoint that queries both DynamoDB alert history and Timestream telemetry transitions. Display as a vertical timeline:
+**Alert Feed (right sidebar)**
+
+- Live alert list from WebSocket, ordered P1 → P2 → P3
+- P1 = red badge, P2 = orange, P3 = yellow
+- Acknowledge button per alert
+- Filter bar: All / P1 only / Unacknowledged / By type
+
+**Asset Detail Panel**
+
+- Current telemetry from DynamoDB: speed, signal strength, GPS, battery, radio channel
+- Device Shadow badge: "Shadow in sync" if `lastSeen` within last 30 seconds
+- Signal strength line chart (Recharts) from `/assets/{id}/history` endpoint
+- Incident timeline below the chart
+
+**Incident Timeline**
+
+Constructed in the frontend by combining alert history and telemetry status changes:
 
 ```
-● 14:01  Signal strength dropped below 50% (74% → 38%)
-● 14:03  Missed 2 consecutive telemetry packets
-● 14:05  Status changed: healthy → warning
+● 14:01  Signal dropped below 50% (74% → 38%)
+● 14:03  Status changed: healthy → warning
 ● 14:08  Status changed: warning → critical
-● 14:09  Alert P1 created: LOW_SIGNAL
+● 14:09  P1 Alert created: LOW_SIGNAL
 ● 14:11  Alert acknowledged by operator
 ```
 
-**Analytics Page (PowerBI-style)**
+**Analytics Page (aggregation done in FastAPI, not a database)**
 
-Reads from Timestream for all charts. Four panels:
+Because Timestream is gone, aggregations are computed in Python using the DynamoDB telemetry scan. For 30 assets, this is fast enough for a portfolio project:
 
-- Asset health breakdown: donut chart (Green/Yellow/Red/Grey counts from DynamoDB scan)
-- Alert volume last 24h: bar chart by hour (Timestream aggregation query)
-- Top 5 most-alerted assets last 24h: ranked list with bar indicators
-- Network signal health trend: line chart of average `signalStrength` across all assets over time
-  Add a CloudWatch Log Insights query result as a fifth "system log" panel — paste in a screenshot if live embedding is complex. This is the "Elastic/Dynatrace" analog that proves you know operational dashboarding.
+```python
+@app.get("/analytics/summary")
+async def get_analytics_summary():
+    # Asset health breakdown
+    assets = assets_table.scan()['Items']
+    status_counts = {"healthy": 0, "warning": 0, "critical": 0, "offline": 0}
+    for a in assets:
+        status_counts[a.get('status', 'offline')] += 1
 
-**Goal for Phase 3:** Full dashboard live. Run the simulator, watch assets appear on the map, trigger a force-fail, watch the alert sidebar update within 3 seconds, open the incident timeline, verify the analytics page shows the spike.
+    # Average signal strength (from recent telemetry across all assets)
+    all_telemetry = telemetry_table.scan(Limit=500)['Items']
+    avg_signal = sum(float(t['signalStrength']) for t in all_telemetry) / max(len(all_telemetry), 1)
+
+    # Top 5 most-alerted assets (last 24h)
+    all_alerts = alerts_table.scan()['Items']
+    from collections import Counter
+    alert_counts = Counter(a['assetId'] for a in all_alerts)
+    top_alerted = alert_counts.most_common(5)
+
+    return {
+        "statusCounts": status_counts,
+        "averageSignalStrength": round(avg_signal, 1),
+        "topAlertedAssets": [{"assetId": k, "count": v} for k, v in top_alerted],
+        "totalActiveAlerts": sum(1 for a in all_alerts if not a.get('acknowledged'))
+    }
+```
+
+Four dashboard panels using this endpoint:
+
+- Donut chart: asset health breakdown
+- Bar chart: alert counts per asset (top 5)
+- Stat card: average signal strength across fleet
+- Stat card: total active P1 alerts
+
+This directly demonstrates the "Elastic / Dynatrace / PowerBI" monitoring awareness from the JD.
+
+**Goal for Phase 3:** Full dashboard live and updating in real time. Run the force-fail command and watch the map, alert feed, and timeline all update within one WebSocket cycle.
 
 ---
 
@@ -528,72 +700,121 @@ Reads from Timestream for all charts. Four panels:
 
 **AI Troubleshooting Assistant (Lambda)**
 
-When an operator asks `"Why is LOCO-5821 in critical status?"`, the Lambda function:
-
-1. Queries Timestream: last 20 telemetry records for LOCO-5821
-2. Queries DynamoDB: all active alerts for LOCO-5821
-3. Fetches matching runbook from S3: `s3://railsight-runbooks/LOW_SIGNAL.json`
-4. Fetches recent Lambda logs from CloudWatch Log Insights for LOCO-5821
-   Then sends everything to the Claude API:
-
 ```python
-def build_context(asset_id, telemetry_rows, alerts, runbook, logs):
-    return f"""
-ASSET: {asset_id}
+import boto3, json, anthropic
+from boto3.dynamodb.conditions import Key
+from decimal import Decimal
 
-RECENT TELEMETRY (last 20 readings):
-{format_telemetry(telemetry_rows)}
+dynamodb = boto3.resource('dynamodb', region_name='ca-central-1')
+s3 = boto3.client('s3', region_name='ca-central-1')
+logs_client = boto3.client('logs', region_name='ca-central-1')
+anthropic_client = anthropic.Anthropic()
 
-ACTIVE ALERTS:
-{format_alerts(alerts)}
-
-RUNBOOK PROCEDURES:
-{json.dumps(runbook, indent=2)}
-
-SYSTEM LOG ENTRIES:
-{logs}
-"""
+RUNBOOKS_BUCKET = 'railsight-runbooks-yourname-2026'
 
 def handler(event, context):
     asset_id = event['assetId']
     question = event['question']
 
-    ctx = build_context(
-        asset_id,
-        get_telemetry(asset_id),
-        get_alerts(asset_id),
-        get_runbook(asset_id),
-        get_cloudwatch_logs(asset_id)
-    )
+    # 1. Last 20 telemetry readings from DynamoDB
+    telemetry = dynamodb.Table('railsight-telemetry').query(
+        KeyConditionExpression=Key('assetId').eq(asset_id),
+        ScanIndexForward=False, Limit=20
+    )['Items']
 
-    response = anthropic.messages.create(
+    # 2. Active alerts for this asset
+    alerts = dynamodb.Table('railsight-alerts').scan(
+        FilterExpression='assetId = :id AND acknowledged = :a',
+        ExpressionAttributeValues={':id': asset_id, ':a': False}
+    )['Items']
+
+    # 3. Runbooks matching active alert types
+    runbooks = []
+    for alert in alerts:
+        try:
+            obj = s3.get_object(Bucket=RUNBOOKS_BUCKET, Key=f"{alert['rule']}.json")
+            runbooks.append(json.loads(obj['Body'].read()))
+        except Exception:
+            pass
+
+    # 4. Recent Lambda log entries mentioning this asset
+    logs = get_recent_logs(asset_id)
+
+    # 5. Build context and call Claude
+    context_text = f"""
+ASSET: {asset_id}
+
+RECENT TELEMETRY (newest first):
+{json.dumps([{k: float(v) if isinstance(v, Decimal) else v for k, v in t.items()
+              if k not in ('expiresAt',)} for t in telemetry], indent=2)}
+
+ACTIVE ALERTS:
+{json.dumps(alerts, indent=2, default=str)}
+
+RUNBOOK PROCEDURES:
+{json.dumps(runbooks, indent=2)}
+
+SYSTEM LOG ENTRIES:
+{logs}
+"""
+
+    response = anthropic_client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=500,
+        max_tokens=400,
         system="""You are an operations assistant for a railway field asset monitoring system.
-You will be given recent telemetry, active alerts, runbook procedures, and system logs for an asset.
-Answer the operator's question clearly and concisely. Suggest one specific next action.
+You are given recent telemetry, active alerts, runbook procedures, and system logs for an asset.
+Answer the operator's question clearly. Suggest one specific next action.
 Do not speculate beyond what the data shows. Keep responses under 150 words.""",
-        messages=[
-            {"role": "user", "content": f"Context:\n{ctx}\n\nQuestion: {question}"}
-        ]
+        messages=[{"role": "user", "content": f"Context:\n{context_text}\n\nQuestion: {question}"}]
     )
 
-    return {"answer": response.content[0].text}
+    return {"answer": response.content[0].text, "assetId": asset_id}
+
+def get_recent_logs(asset_id):
+    try:
+        response = logs_client.filter_log_events(
+            logGroupName='/aws/lambda/railsight-telemetry-processor',
+            filterPattern=asset_id,
+            limit=20
+        )
+        return '\n'.join(e['message'] for e in response['events'])
+    except Exception:
+        return "No recent log entries found."
 ```
 
-S3 runbook files (`LOW_SIGNAL.json`, `ASSET_OFFLINE.json`, `UNEXPECTED_STOP.json`):
+S3 runbook files — upload these manually to your runbooks bucket:
+
+`LOW_SIGNAL.json`
 
 ```json
 {
   "alertType": "LOW_SIGNAL",
-  "severity": "P1 if < 20%, P2 if < 40%",
-  "immediateActions": ["Verify radio channel assignment matches expected corridor plan", "Check antenna connection at nearest tower (RADIO-TOWER-09 for this zone)", "Confirm asset GPS position — signal issues can indicate zone boundary"],
-  "escalationPath": "If unresolved after 15 minutes, escalate to field crew in zone",
-  "relatedAlerts": ["ASSET_OFFLINE", "DUPLICATE_TELEMETRY"]
+  "immediateActions": ["Verify radio channel assignment matches corridor plan", "Check antenna connection at nearest tower", "Confirm asset GPS position — signal issues can indicate zone boundary crossing"],
+  "escalation": "If unresolved after 15 minutes, dispatch field crew to last known GPS position."
 }
 ```
 
-**Bash Health-Check Script (`health_check.sh`)**
+`ASSET_OFFLINE.json`
+
+```json
+{
+  "alertType": "ASSET_OFFLINE",
+  "immediateActions": ["Attempt radio contact on backup channel", "Check last known GPS position in dashboard", "Verify power status with dispatch"],
+  "escalation": "If no contact after 15 minutes, escalate to field supervisor and mark corridor for manual inspection."
+}
+```
+
+`UNEXPECTED_STOP.json`
+
+```json
+{
+  "alertType": "UNEXPECTED_STOP",
+  "immediateActions": ["Contact locomotive engineer directly via radio", "Check track obstruction reports for that corridor", "Review preceding 10 speed telemetry readings for anomaly pattern"],
+  "escalation": "If engineer unreachable, initiate emergency response protocol and notify operations centre."
+}
+```
+
+**Bash Health-Check Script (`scripts/health_check.sh`)**
 
 ```bash
 #!/bin/bash
@@ -601,56 +822,62 @@ echo "=== RailSight Cloud Health Check ==="
 echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo ""
 
-# Local services
-echo "[LOCAL]"
-echo "  Edge Gateway:     $(pgrep -f edge_gateway.py > /dev/null && echo running || echo STOPPED)"
-echo "  Simulator:        $(pgrep -f simulate_assets.py > /dev/null && echo running || echo stopped)"
-echo "  FastAPI Backend:  $(curl -sf http://localhost:8000/health | jq -r .status 2>/dev/null || echo DOWN)"
-echo "  WebSocket:        $(wscat -c ws://localhost:8000/ws --wait 1 > /dev/null 2>&1 && echo active || echo DOWN)"
+echo "[LOCAL SERVICES]"
+echo "  Edge Gateway:    $(pgrep -f edge_gateway.py > /dev/null && echo running || echo STOPPED)"
+echo "  Simulator:       $(pgrep -f simulate_assets.py > /dev/null && echo running || echo stopped)"
+echo "  FastAPI Backend: $(curl -sf http://localhost:8000/health | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo DOWN)"
+echo "  WebSocket:       $(wscat -c ws://localhost:8000/ws --wait 1 > /dev/null 2>&1 && echo active || echo DOWN)"
 echo ""
 
-# AWS services
-echo "[AWS ca-central-1]"
-echo "  IoT Core:         $(aws iot describe-endpoint --endpoint-type iot:Data-ATS --query endpointAddress --output text 2>/dev/null | head -c 30)..."
-echo "  DynamoDB Assets:  $(aws dynamodb describe-table --table-name railsight-assets --query 'Table.TableStatus' --output text 2>/dev/null)"
-echo "  DynamoDB Alerts:  $(aws dynamodb describe-table --table-name railsight-alerts --query 'Table.TableStatus' --output text 2>/dev/null)"
-echo "  Lambda Processor: $(aws lambda get-function-configuration --function-name railsight-telemetry-processor --query 'State' --output text 2>/dev/null)"
-echo "  Lambda Checker:   $(aws lambda get-function-configuration --function-name railsight-offline-checker --query 'State' --output text 2>/dev/null)"
-echo "  Lambda AI:        $(aws lambda get-function-configuration --function-name railsight-ai-assistant --query 'State' --output text 2>/dev/null)"
+echo "[AWS SERVICES — ca-central-1]"
+echo "  DynamoDB Assets:     $(aws dynamodb describe-table --table-name railsight-assets --query 'Table.TableStatus' --output text 2>/dev/null || echo ERROR)"
+echo "  DynamoDB Telemetry:  $(aws dynamodb describe-table --table-name railsight-telemetry --query 'Table.TableStatus' --output text 2>/dev/null || echo ERROR)"
+echo "  DynamoDB Alerts:     $(aws dynamodb describe-table --table-name railsight-alerts --query 'Table.TableStatus' --output text 2>/dev/null || echo ERROR)"
+echo "  Lambda Processor:    $(aws lambda get-function-configuration --function-name railsight-telemetry-processor --query 'State' --output text 2>/dev/null || echo ERROR)"
+echo "  Lambda Checker:      $(aws lambda get-function-configuration --function-name railsight-offline-checker --query 'State' --output text 2>/dev/null || echo ERROR)"
+echo "  Lambda AI:           $(aws lambda get-function-configuration --function-name railsight-ai-assistant --query 'State' --output text 2>/dev/null || echo ERROR)"
+echo "  S3 Runbooks:         $(aws s3 ls s3://railsight-runbooks-yourname-2026/ 2>/dev/null | wc -l | tr -d ' ') runbook files"
 echo ""
 
-# Operational status
-echo "[OPERATIONS]"
+echo "[OPERATIONAL STATUS]"
 ASSETS_ONLINE=$(aws dynamodb scan --table-name railsight-assets \
   --filter-expression "#s <> :offline" \
   --expression-attribute-names '{"#s":"status"}' \
   --expression-attribute-values '{":offline":{"S":"offline"}}' \
-  --select COUNT --query Count --output text 2>/dev/null)
+  --select COUNT --query Count --output text 2>/dev/null || echo "?")
+TOTAL_ASSETS=$(aws dynamodb scan --table-name railsight-assets \
+  --select COUNT --query Count --output text 2>/dev/null || echo "?")
 P1_ALERTS=$(aws dynamodb scan --table-name railsight-alerts \
   --filter-expression "severity = :s AND acknowledged = :a" \
   --expression-attribute-values '{":s":{"S":"P1"},":a":{"BOOL":false}}' \
-  --select COUNT --query Count --output text 2>/dev/null)
-echo "  Assets Online:    ${ASSETS_ONLINE:-unknown}"
-echo "  Active P1 Alerts: ${P1_ALERTS:-unknown}"
+  --select COUNT --query Count --output text 2>/dev/null || echo "?")
+TELEMETRY_EVENTS=$(aws dynamodb scan --table-name railsight-telemetry \
+  --select COUNT --query Count --output text 2>/dev/null || echo "?")
+
+echo "  Assets Online:       ${ASSETS_ONLINE} / ${TOTAL_ASSETS}"
+echo "  Active P1 Alerts:    ${P1_ALERTS}"
+echo "  Telemetry Records:   ${TELEMETRY_EVENTS} (last 24h, TTL auto-expires older)"
+echo ""
+echo "=== Done ==="
 ```
 
-**Goal for Phase 4:** AI assistant gives grounded, data-backed responses. Health script runs in under 5 seconds. All components verified in one terminal window.
+**Goal for Phase 4:** AI assistant gives grounded responses from actual DynamoDB and S3 data. Health script passes cleanly. Everything starts with `docker compose up`.
 
 ---
 
-## Docker Compose (Local Orchestration)
-
-AWS services run in the cloud. Docker Compose only handles what runs locally:
+## Docker Compose
 
 ```yaml
 services:
   edge-gateway:
     build: ./edge-gateway
     ports:
-      - "9000:9000/udp" # receives UDP from simulator
+      - "9000:9000/udp"
     environment:
       - IOT_ENDPOINT=${IOT_ENDPOINT}
       - AWS_REGION=ca-central-1
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
     volumes:
       - ./certs:/app/certs:ro
     restart: unless-stopped
@@ -661,16 +888,18 @@ services:
       - "8000:8000"
     environment:
       - AWS_REGION=ca-central-1
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - DYNAMODB_ASSETS_TABLE=railsight-assets
+      - DYNAMODB_TELEMETRY_TABLE=railsight-telemetry
       - DYNAMODB_ALERTS_TABLE=railsight-alerts
-      - TIMESTREAM_DATABASE=railsight
-      - TIMESTREAM_TABLE=telemetry
+      - RUNBOOKS_BUCKET=railsight-runbooks-yourname-2026
     depends_on:
       - edge-gateway
 
   simulator:
     build: ./simulator
-    command: python simulate_assets.py --assets 30 --failure-rate 0.10
+    command: python simulate_assets.py --assets 30 --failure-rate 0.10 --interval 10
     depends_on:
       - edge-gateway
 
@@ -683,9 +912,7 @@ services:
       - REACT_APP_WS_URL=ws://localhost:8000/ws
 ```
 
-One command: `docker compose up`. Simulator runs, gateway connects to IoT Core, backend serves the dashboard.
-
-Note in your README: AWS credentials must be configured in the host environment (`aws configure`). IoT certificates must be in `./certs/`.
+AWS credentials come from a `.env` file (gitignored). IoT certificates are mounted read-only from `./certs/`.
 
 ---
 
@@ -697,13 +924,12 @@ railsight-cloud/
 │   ├── simulate_assets.py
 │   └── Dockerfile
 ├── edge-gateway/
-│   ├── edge_gateway.py       ← the architectural star of the project
-│   ├── requirements.txt      ← awsiotsdk, paho-mqtt
+│   ├── edge_gateway.py
+│   ├── requirements.txt        ← awsiotsdk, paho-mqtt
 │   └── Dockerfile
 ├── backend/
-│   ├── main.py               ← FastAPI app
+│   ├── main.py                 ← FastAPI app
 │   ├── dynamodb_client.py
-│   ├── timestream_client.py
 │   ├── websocket_manager.py
 │   └── Dockerfile
 ├── lambda/
@@ -714,17 +940,16 @@ railsight-cloud/
 │   └── ai_assistant/
 │       └── handler.py
 ├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── AssetMap.tsx
-│   │   │   ├── AlertFeed.tsx
-│   │   │   ├── AssetDetail.tsx
-│   │   │   ├── IncidentTimeline.tsx
-│   │   │   ├── AnalyticsPage.tsx
-│   │   │   └── AIAssistant.tsx
-│   │   └── App.tsx
-│   └── Dockerfile
-├── runbooks/                 ← JSON files, uploaded to S3
+│   └── src/
+│       ├── components/
+│       │   ├── AssetMap.tsx
+│       │   ├── AlertFeed.tsx
+│       │   ├── AssetDetail.tsx
+│       │   ├── IncidentTimeline.tsx
+│       │   ├── AnalyticsPage.tsx
+│       │   └── AIAssistant.tsx
+│       └── App.tsx
+├── runbooks/                   ← upload to S3 manually
 │   ├── LOW_SIGNAL.json
 │   ├── ASSET_OFFLINE.json
 │   ├── UNEXPECTED_STOP.json
@@ -732,111 +957,45 @@ railsight-cloud/
 ├── scripts/
 │   └── health_check.sh
 ├── infra/
-│   └── setup_aws.md          ← manual AWS setup steps
-├── certs/                    ← gitignored
-│   ├── edge-gateway.cert.pem
-│   ├── edge-gateway.private.key
-│   └── root-CA.crt
+│   └── setup_aws.md
+├── certs/                      ← gitignored
+├── .env                        ← gitignored
 ├── docker-compose.yml
 └── README.md
 ```
 
 ---
 
-## GitHub README Structure
-
-```markdown
-# RailSight Cloud
-
-Real-Time Railway Field Asset Monitoring with AWS IoT Core
-
-[dashboard screenshot — most important thing in the README]
-
-## Architecture
-
-[ASCII diagram]
-
-## What It Does
-
-3 sentences. Plain English. No jargon.
-
-## Why the Hybrid Design
-
-UDP at the edge, MQTT to the cloud — the same pattern used in
-real industrial IoT deployments where field devices speak legacy
-protocols and a gateway bridges them to cloud infrastructure.
-
-## Quick Start
-
-# Prerequisites: AWS credentials configured, IoT certs in ./certs/
-
-docker compose up
-
-## Triggering a Failure (Demo Mode)
-
-python simulate_assets.py --force-fail LOCO-5821 --type signal_drop
-
-## AWS Infrastructure
-
-See infra/setup_aws.md for the manual setup steps.
-Services used: IoT Core, Lambda, DynamoDB, Timestream, S3, CloudWatch
-
-## Tech Stack
-
-[table]
-
-## Running the Health Check
-
-./scripts/health_check.sh
-```
-
----
-
 ## 60-Second Recruiter Demo Script
 
-1. Terminal A: `docker compose up`. Edge gateway connects to IoT Core. Simulator starts.
-2. Open dashboard at `localhost:3000`. 30 assets appear on the Alberta map, mostly green.
-3. Terminal B: `python simulate_assets.py --force-fail LOCO-5821 --type signal_drop`
-4. On the map, LOCO-5821 turns yellow then red within one WebSocket cycle (≤3 seconds).
+1. Terminal A: `docker compose up` — edge gateway connects, simulator starts at 10s intervals.
+2. Open `localhost:3000`. 30 assets appear on the Alberta map, mostly green.
+3. Terminal B: `python simulate_assets.py --force-fail LOCO-1000 --fail-type signal_drop --interval 10`
+4. Watch LOCO-1000 turn yellow then red on the map within one WebSocket cycle.
 5. P1 alert appears in the sidebar: "LOW_SIGNAL — Signal at 18%."
-6. Click LOCO-5821. Show the incident timeline — exact sequence of telemetry events.
-7. Show the signal strength chart: Recharts line dropping from 74 to 18 over 5 readings.
-8. Type in the AI chat: `"What happened to LOCO-5821?"`
-9. AI responds with signal drop sequence, Timestream data points, and runbook action.
-10. Terminal B: `./scripts/health_check.sh`. All green except "Active P1 Alerts: 1".
-11. Click Acknowledge in the dashboard. Alert moves to resolved.
-12. Optional: Open AWS Console → IoT Core → MQTT Test Client → subscribe to `railsight/assets/LOCO-5821/telemetry`. Show raw packets arriving. This one moment proves the whole cloud pipeline is real.
+6. Click LOCO-1000. Show the incident timeline and signal strength chart.
+7. Type in the AI chat: `"What happened to LOCO-1000 and what should I do?"`
+8. AI responds with signal drop sequence from DynamoDB and the runbook action from S3.
+9. Terminal B: `./scripts/health_check.sh`. All green except "Active P1 Alerts: 1."
+10. Acknowledge the alert in the dashboard.
+11. Optional: Open AWS Console → IoT Core → MQTT Test Client → subscribe to `railsight/assets/#`. Show live packets arriving. This proves the cloud pipeline is real, not simulated locally.
 
 ---
 
-## Resume Bullets (Use One)
+## Resume Bullets
 
 **Concise:**
 
-> Built RailSight Cloud, a hybrid railway asset monitoring platform where simulated field assets send UDP telemetry to a Python edge gateway that republishes to AWS IoT Core over MQTT; implemented IoT Rules, Lambda-based alert engines, DynamoDB/Timestream persistence, a FastAPI WebSocket backend, React dashboard, and AI-assisted troubleshooting from CloudWatch logs and S3 runbooks.
+> Built RailSight Cloud, a hybrid railway field asset monitoring platform where simulated locomotives, wayside detectors, and radio towers send UDP telemetry to a Python edge gateway that republishes to AWS IoT Core over MQTT; IoT Rules trigger Lambda for alert processing, DynamoDB stores asset state and time-series telemetry with 24-hour TTL, and a FastAPI WebSocket backend serves a React dashboard with AI-assisted troubleshooting from CloudWatch logs and S3 runbooks.
 
 **Stronger:**
 
-> Designed and built a "single pane of glass" railway field asset monitoring system using a hybrid IoT architecture: UDP telemetry from simulated locomotives, wayside detectors, and radio towers flows through a Python edge gateway to AWS IoT Core, where Lambda functions enforce P1/P2/P3 alert rules, Timestream stores time-series telemetry, and a React dashboard surfaces live asset status, incident timelines, and GenAI-assisted troubleshooting recommendations.
-
-**With scale:**
-
-> Architected RailSight Cloud, a full-stack real-time monitoring platform simulating 50+ railway field assets across four asset types; edge gateway bridges UDP telemetry to AWS IoT Core over MQTT, IoT Rules fan out to Lambda (alert engine), Timestream (history), and DynamoDB (state); React dashboard provides live status map, incident reconstruction, and AI troubleshooting aligned with ITIL P1/P2/P3 severity model.
+> Designed a "single pane of glass" railway monitoring platform using a hybrid IoT architecture: simulated field assets transmit UDP telemetry to a Python edge gateway, which bridges to AWS IoT Core over MQTT; Lambda functions enforce P1/P2/P3 alert rules, DynamoDB persists asset state and rolling telemetry history, and a React dashboard surfaces live status maps, incident timelines, and GenAI troubleshooting grounded in structured logs and operational runbooks — deployed entirely within the AWS free tier.
 
 ---
 
 ## What to Say in the Interview
 
-> "The core architectural decision was the edge gateway. I could have just had the simulator publish MQTT directly to IoT Core, but that wouldn't reflect how real railway field systems actually work — those assets use legacy protocols like UDP and serial, not MQTT. So I added a gateway layer that bridges UDP to MQTT before it hits the cloud. That decision gave me a natural place to do schema validation, duplicate detection, and malformed-packet logging before anything reaches AWS, which is exactly the kind of concern you'd have in a mission-critical system. The Rover project I built during school used the same pattern — we transmitted sensor data over UDP to a local receiver, and I basically extended that idea to the cloud here."
+> "The core architectural decision was the edge gateway. I could have had the simulator publish MQTT directly to IoT Core, but that wouldn't reflect how real field systems work — those assets speak UDP and serial, not MQTT. So I added a gateway that bridges UDP to MQTT and handles validation before anything touches AWS. The other decision I'm proud of is replacing Timestream with a DynamoDB table using TTL. Timestream has no free tier and I wanted the project to be fully reproducible by anyone, so I used DynamoDB's auto-expiry feature to get the same rolling 24-hour telemetry window at zero cost. That tradeoff — choosing the right tool within real constraints — is something I'd be making constantly in this role."
 
-That answer shows systems design reasoning, domain awareness, and a direct connection to your own prior work. That combination is hard to fake and hard to forget.
-
----
-
-## Optional Enhancements After MVP
-
-- **SNMP trap simulation** — add a separate thread in the simulator that emits SNMP traps (using pysnmp) when an asset goes offline. One bullet in the README, one mention in the interview. Covers CPKC's explicit SNMP requirement.
-- **AMQP/RabbitMQ** — add a RabbitMQ container between the edge gateway and the simulator to buffer UDP bursts before publishing to IoT Core. Covers the AMQP requirement.
-- **PTC/ETC zone labels** — add a `ptcZone` or `etcCorridor` field to telemetry packets and display it on the map. No real implementation needed — just naming conventions that show you read the JD.
-- **Loom walkthrough** — 3 minutes, link at the top of the README. Most portfolio reviewers watch before they read. Record it last, once everything works cleanly.
-- **AWS CDK or CloudFormation template** — replace `infra/setup_aws.md` with an actual IaC script. Shows modern DevOps awareness and makes the project reproducible.
+That answer shows systems thinking, cost awareness, and practical engineering judgment. It's hard to fake and hard to forget.
