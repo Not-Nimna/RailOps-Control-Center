@@ -1,0 +1,15 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+
+  edge-gateway:
+    build: ./edge-gateway
+    depends_on:
+      - backend
+
+  simulator:
+    build: ./simulator
+    depends_on:
+      - edge-gateway
