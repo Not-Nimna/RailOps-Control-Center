@@ -1,6 +1,36 @@
-# RailOps-Control-Center
+ # RailSight
+Real-Time Field Asset Monitoring and AI-Assisted Troubleshooting for Railway Operations
 
-## Real-Time Train/Field Asset Monitoring Platform
+[screenshot of dashboard here]
 
 
- A real-time monitoring and incident management platform that streams live telemetry from simulated railway field assets (could be locomotives, wayside detectors, and radios: these are all simulated) over UDP and WebSockets, surfaces failures through an automated alert engine, and responds to operator queries using an AI troubleshooting assistant trained on structured logs and runbooks.
+
+## What It Does
+Simulates railway field assets (locomotives, wayside detectors, radios) sending UDP telemetry to a Python edge gateway, which validates and republishes events to AWS IoT Core over MQTT; cloud-side IoT Rules route data to Lambda, DynamoDB, and Timestream, while a FastAPI WebSocket backend serves a live React dashboard with AI-assisted incident troubleshooting from CloudWatch logs and S3 runbooks.
+
+
+## Why I Built It
+I wanted to build something that reflected how railway field systems actually work: telemetry at the edge, protocol translation through a gateway, cloud-based monitoring, and operator-focused troubleshooting.
+
+## Quick Start
+docker compose up
+
+## Features
+- Live asset map with status color-coding
+- Real-time alert engine (P1/P2/P3 severity)
+- Incident timeline per asset
+- AI troubleshooting assistant over structured logs and runbooks
+- Bash health-check automation script
+- Analytics dashboard
+
+## Architecture
+[paste the ASCII diagram from above]
+
+## Tech Stack
+[table]
+
+## Running the Simulator
+python simulate_assets.py --assets 30 --failure-rate 0.10
+
+## Triggering a Failure (Demo)
+python simulate_assets.py --force-fail LOCO-5821 --type signal_drop
