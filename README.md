@@ -1,7 +1,7 @@
  # RailSight
 Real-Time Field Asset Monitoring and AI-Assisted Troubleshooting for Railway Operations
 
-[screenshot of dashboard here]
+[screenshot of dashboard]
 
 
 
@@ -24,7 +24,7 @@ docker compose up
 - Analytics dashboard
 
 ## Architecture
-[paste the ASCII diagram from above]
+[ ASCII diagram ]
 
 ## Tech Stack
 [table]
