@@ -1,0 +1,1394 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RailSight | Railway Operations Monitoring</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg: #071014;
+        --panel: rgba(12, 25, 31, 0.72);
+        --panel-strong: rgba(16, 34, 42, 0.9);
+        --line: rgba(137, 220, 235, 0.16);
+        --text: #eff8fb;
+        --muted: #9eb0b9;
+        --cyan: #7de7ff;
+        --amber: #ffbf5b;
+        --red: #ff6b6b;
+        --green: #8ee6b7;
+        --shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: radial-gradient(circle at 78% 10%, rgba(125, 231, 255, 0.16), transparent 28rem), radial-gradient(circle at 18% 38%, rgba(255, 191, 91, 0.09), transparent 24rem), linear-gradient(180deg, #071014 0%, #0b151b 42%, #05090d 100%);
+        color: var(--text);
+        font-family:
+          Inter,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        overflow-x: hidden;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: -2;
+        background-image: linear-gradient(rgba(125, 231, 255, 0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(125, 231, 255, 0.035) 1px, transparent 1px);
+        background-size: 64px 64px;
+        mask-image: linear-gradient(to bottom, #000, transparent 80%);
+      }
+
+      a {
+        color: inherit;
+      }
+
+      button,
+      a {
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      .progress-bar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        z-index: 50;
+        width: 0%;
+        height: 3px;
+        background: linear-gradient(90deg, var(--cyan), var(--amber));
+        box-shadow: 0 0 22px rgba(125, 231, 255, 0.8);
+      }
+
+      .loader {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: grid;
+        place-items: center;
+        background: radial-gradient(circle at center, rgba(125, 231, 255, 0.14), transparent 24rem), #071014;
+        transition:
+          opacity 0.45s ease,
+          visibility 0.45s ease;
+      }
+
+      .loader.is-hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      .loader-card {
+        display: grid;
+        justify-items: center;
+        gap: 16px;
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        padding: 28px 32px;
+        background: rgba(7, 16, 20, 0.72);
+        backdrop-filter: blur(18px);
+        box-shadow: var(--shadow);
+      }
+
+      .loader-spinner {
+        width: 54px;
+        height: 54px;
+        border: 3px solid rgba(125, 231, 255, 0.16);
+        border-top-color: var(--cyan);
+        border-radius: 999px;
+        animation: spin 0.9s linear infinite;
+        box-shadow: 0 0 28px rgba(125, 231, 255, 0.24);
+      }
+
+      .loader-title {
+        font-weight: 900;
+      }
+
+      .loader-status {
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .nav {
+        position: fixed;
+        top: 18px;
+        left: 50%;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: min(1120px, calc(100% - 32px));
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(7, 16, 20, 0.64);
+        backdrop-filter: blur(18px);
+        box-shadow: var(--shadow);
+        transform: translateX(-50%);
+      }
+
+      .nav-links {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        justify-content: center;
+      }
+
+      .nav a {
+        border-radius: 999px;
+        padding: 9px 12px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      .nav a:hover {
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.06);
+      }
+
+      .canvas-shell {
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        opacity: 0.96;
+      }
+
+      .hero {
+        position: relative;
+        min-height: 100svh;
+        display: flex;
+        align-items: center;
+        padding: 120px max(24px, 8vw) 80px;
+      }
+
+      .hero-copy {
+        width: min(720px, calc(100vw - 48px));
+        padding: 28px;
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background: rgba(7, 16, 20, 0.48);
+        backdrop-filter: blur(18px);
+        box-shadow: var(--shadow);
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 32px;
+        border: 1px solid rgba(125, 231, 255, 0.22);
+        border-radius: 999px;
+        padding: 6px 11px;
+        color: var(--cyan);
+        background: rgba(125, 231, 255, 0.08);
+        font-size: 12px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .pill::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--green);
+        box-shadow: 0 0 16px var(--green);
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        margin-top: 20px;
+        font-size: clamp(3.7rem, 8vw, 7.6rem);
+        line-height: 0.9;
+        font-weight: 900;
+        letter-spacing: -0.06em;
+      }
+
+      .hero-copy > p {
+        margin-top: 22px;
+        color: #d2e2e8;
+        font-size: clamp(1.08rem, 2vw, 1.45rem);
+        line-height: 1.48;
+      }
+
+      .cta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 28px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 46px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 999px;
+        padding: 0 18px;
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.07);
+        font-weight: 800;
+        text-decoration: none;
+        transition:
+          transform 0.2s ease,
+          border-color 0.2s ease,
+          background 0.2s ease;
+      }
+
+      .button:hover {
+        transform: translateY(-2px);
+        border-color: rgba(125, 231, 255, 0.42);
+        background: rgba(125, 231, 255, 0.12);
+      }
+
+      .button.primary {
+        color: #031116;
+        background: linear-gradient(135deg, var(--cyan), var(--green));
+        box-shadow: 0 0 34px rgba(125, 231, 255, 0.26);
+      }
+
+      .scroll-note {
+        margin-top: 30px;
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .asset-hud {
+        position: absolute;
+        right: max(20px, 6vw);
+        bottom: 7vh;
+        display: grid;
+        gap: 18px;
+        width: min(430px, 38vw);
+        border: 1px solid rgba(125, 231, 255, 0.18);
+        border-radius: 30px;
+        padding: 24px;
+        background: rgba(18, 27, 35, 0.74);
+        backdrop-filter: blur(20px) saturate(1.12);
+        box-shadow: 0 28px 90px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .metric-tile,
+      .signal-card {
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 22px;
+        background: rgba(22, 31, 40, 0.78);
+        box-shadow: 10px 10px 26px rgba(0, 0, 0, 0.24), -8px -8px 20px rgba(255, 255, 255, 0.025);
+        transition: transform 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease, background 0.22s ease;
+      }
+
+      .metric-tile {
+        min-height: 96px;
+        padding: 18px;
+      }
+
+      .metric-tile:hover,
+      .signal-card:hover {
+        transform: translateY(-5px);
+        border-color: rgba(125, 231, 255, 0.36);
+        background: rgba(25, 39, 49, 0.92);
+        box-shadow: 0 22px 60px rgba(0, 0, 0, 0.34), 0 0 32px rgba(125, 231, 255, 0.1);
+      }
+
+      .metric-label {
+        display: block;
+        color: #aeb9c4;
+        font-size: 0.74rem;
+        font-weight: 900;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .metric-value {
+        display: block;
+        margin-top: 12px;
+        color: #eef6fb;
+        font-size: clamp(1.15rem, 1.6vw, 1.55rem);
+        font-weight: 900;
+      }
+
+      .signal-card {
+        padding: 18px;
+      }
+
+      .signal-card h4 {
+        margin: 0 0 14px;
+        font-size: 1rem;
+      }
+
+      .signal-chart {
+        display: block;
+        width: 100%;
+        height: auto;
+        overflow: visible;
+      }
+
+      .signal-chart .grid-line {
+        stroke: rgba(160, 176, 188, 0.16);
+        stroke-dasharray: 4 5;
+      }
+
+      .signal-chart .axis {
+        stroke: rgba(220, 232, 238, 0.34);
+      }
+
+      .signal-chart .signal-line {
+        fill: none;
+        stroke: var(--cyan);
+        stroke-width: 3;
+        filter: drop-shadow(0 0 8px rgba(125, 231, 255, 0.5));
+      }
+
+      .signal-chart text {
+        fill: #aeb9c4;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+
+      .section {
+        position: relative;
+        padding: 110px max(24px, 8vw);
+      }
+
+      .section-header {
+        width: min(820px, 100%);
+        margin-bottom: 34px;
+      }
+
+      .eyebrow {
+        margin-bottom: 12px;
+        color: var(--cyan);
+        font-size: 12px;
+        font-weight: 900;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      h2 {
+        font-size: clamp(2rem, 5vw, 4.7rem);
+        line-height: 0.98;
+        letter-spacing: -0.055em;
+      }
+
+      .section-header p,
+      .body-copy {
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 1.05rem;
+        line-height: 1.75;
+      }
+
+      .story {
+        padding-top: 60px;
+      }
+
+      .track-story {
+        position: relative;
+        display: grid;
+        gap: 26px;
+        margin-top: 24px;
+      }
+
+      .track-line {
+        position: absolute;
+        left: 28px;
+        top: 28px;
+        bottom: 28px;
+        width: 4px;
+        border-radius: 999px;
+        background: linear-gradient(var(--cyan), var(--amber), var(--green));
+        box-shadow: 0 0 30px rgba(125, 231, 255, 0.32);
+      }
+
+      .story-card {
+        position: relative;
+        margin-left: 78px;
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        padding: 24px;
+        background: var(--panel);
+        backdrop-filter: blur(18px);
+        box-shadow: var(--shadow);
+      }
+
+      .story-card::before {
+        content: attr(data-stop);
+        position: absolute;
+        left: -76px;
+        top: 24px;
+        display: grid;
+        place-items: center;
+        width: 56px;
+        height: 56px;
+        border: 1px solid rgba(125, 231, 255, 0.35);
+        border-radius: 18px;
+        color: var(--cyan);
+        background: #08151a;
+        font-weight: 900;
+        box-shadow: 0 0 28px rgba(125, 231, 255, 0.25);
+      }
+
+      .story-card h3 {
+        font-size: 1.35rem;
+      }
+
+      .story-card p {
+        margin-top: 10px;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .showcase-frame {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 32px;
+        background: linear-gradient(135deg, rgba(16, 34, 42, 0.96), rgba(5, 11, 15, 0.96));
+        box-shadow: var(--shadow);
+      }
+
+      .showcase-image {
+        display: block;
+        width: 100%;
+        height: auto;
+        min-height: 420px;
+        object-fit: cover;
+        opacity: 0.96;
+      }
+
+      .showcase-frame::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: linear-gradient(90deg, rgba(7, 16, 20, 0.14), transparent 22%, transparent 78%, rgba(7, 16, 20, 0.2)), linear-gradient(180deg, transparent 70%, rgba(7, 16, 20, 0.22));
+      }
+
+      .architecture-shot {
+        margin-bottom: 24px;
+      }
+
+      .dashboard-mock {
+        display: grid;
+        grid-template-columns: 1.35fr 0.72fr 0.72fr;
+        gap: 16px;
+        min-height: 560px;
+        padding: 22px;
+      }
+
+      .mock-panel {
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.045);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      }
+
+      .mock-map {
+        position: relative;
+        background:
+          linear-gradient(35deg, transparent 48%, rgba(125, 231, 255, 0.22) 49% 51%, transparent 52%), radial-gradient(circle at 34% 35%, rgba(142, 230, 183, 0.18), transparent 20%),
+          radial-gradient(circle at 68% 58%, rgba(255, 191, 91, 0.14), transparent 22%), rgba(8, 20, 25, 0.9);
+      }
+
+      .mock-pin {
+        position: absolute;
+        width: 16px;
+        height: 16px;
+        border-radius: 999px;
+        background: var(--cyan);
+        box-shadow: 0 0 22px var(--cyan);
+      }
+
+      .mock-pin:nth-child(1) {
+        left: 28%;
+        top: 36%;
+      }
+
+      .mock-pin:nth-child(2) {
+        left: 62%;
+        top: 48%;
+        background: var(--amber);
+        box-shadow: 0 0 22px var(--amber);
+      }
+
+      .mock-pin:nth-child(3) {
+        left: 76%;
+        top: 72%;
+        background: var(--red);
+        box-shadow: 0 0 22px var(--red);
+      }
+
+      .mock-stack {
+        display: grid;
+        gap: 16px;
+      }
+
+      .mock-card {
+        min-height: 118px;
+        padding: 18px;
+      }
+
+      .mock-card strong {
+        display: block;
+        color: var(--cyan);
+        font-size: 0.83rem;
+        text-transform: uppercase;
+      }
+
+      .mock-card span {
+        display: block;
+        margin-top: 12px;
+        color: var(--text);
+        font-size: 1.6rem;
+        font-weight: 900;
+      }
+
+      .alert-line {
+        margin-top: 12px;
+        border-radius: 14px;
+        padding: 12px;
+        background: rgba(255, 107, 107, 0.11);
+        color: #ffd6d6;
+        font-size: 0.85rem;
+      }
+
+      .callout {
+        position: absolute;
+        border: 1px solid rgba(125, 231, 255, 0.28);
+        border-radius: 999px;
+        padding: 8px 11px;
+        color: var(--cyan);
+        background: rgba(7, 16, 20, 0.72);
+        backdrop-filter: blur(12px);
+        font-size: 12px;
+        font-weight: 900;
+        box-shadow: var(--shadow);
+      }
+
+      .callout:nth-of-type(1) {
+        left: 8%;
+        top: 9%;
+      }
+
+      .callout:nth-of-type(2) {
+        right: 6%;
+        top: 12%;
+      }
+
+      .callout:nth-of-type(3) {
+        right: 30%;
+        bottom: 12%;
+      }
+
+      .callout:nth-of-type(4) {
+        left: 38%;
+        top: 48%;
+      }
+
+      .callout:nth-of-type(5) {
+        left: 10%;
+        bottom: 12%;
+      }
+
+      .callout:nth-of-type(6) {
+        right: 10%;
+        bottom: 34%;
+      }
+
+      .architecture-flow,
+      .feature-grid,
+      .stack-grid,
+      .impact-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .flow-card,
+      .feature-card,
+      .stack-card,
+      .impact-card {
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        padding: 20px;
+        background: var(--panel);
+        backdrop-filter: blur(18px);
+        box-shadow: var(--shadow);
+        transition:
+          transform 0.2s ease,
+          border-color 0.2s ease,
+          background 0.2s ease;
+      }
+
+      .flow-card:hover,
+      .feature-card:hover,
+      .stack-card:hover,
+      .impact-card:hover {
+        transform: translateY(-4px);
+        border-color: rgba(125, 231, 255, 0.38);
+        background: rgba(18, 39, 48, 0.86);
+      }
+
+      .flow-card small,
+      .stack-card small {
+        color: var(--cyan);
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+
+      .flow-card h3,
+      .feature-card h3,
+      .stack-card h3,
+      .impact-card h3 {
+        margin-top: 10px;
+        font-size: 1rem;
+      }
+
+      .flow-card p,
+      .feature-card p,
+      .stack-card p,
+      .impact-card p {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.6;
+      }
+
+      .two-col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+      }
+
+      details {
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 18px 20px;
+        background: var(--panel);
+        backdrop-filter: blur(18px);
+      }
+
+      details + details {
+        margin-top: 12px;
+      }
+
+      summary {
+        cursor: pointer;
+        font-weight: 900;
+      }
+
+      details p {
+        margin-top: 12px;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+
+      .final {
+        min-height: 78svh;
+        display: grid;
+        place-items: center;
+        text-align: center;
+      }
+
+      .final .section-header {
+        margin: 0 auto;
+      }
+
+      .horizon {
+        position: absolute;
+        inset: auto 0 0;
+        height: 45%;
+        pointer-events: none;
+        background: radial-gradient(ellipse at center bottom, rgba(125, 231, 255, 0.2), transparent 60%);
+      }
+
+      @media (max-width: 1020px) {
+        .asset-hud {
+          display: none;
+        }
+
+        .dashboard-mock,
+        .two-col {
+          grid-template-columns: 1fr;
+        }
+
+        .architecture-flow,
+        .feature-grid,
+        .stack-grid,
+        .impact-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+      }
+
+      @media (max-width: 700px) {
+        .nav-links {
+          display: none;
+        }
+
+        .hero,
+        .section {
+          padding-inline: 18px;
+        }
+
+        .hero-copy {
+          padding: 22px;
+        }
+
+        .architecture-flow,
+        .feature-grid,
+        .stack-grid,
+        .impact-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .story-card {
+          margin-left: 64px;
+        }
+
+        .track-line {
+          left: 22px;
+        }
+
+        .story-card::before {
+          left: -64px;
+          width: 46px;
+          height: 46px;
+          border-radius: 15px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="loader" id="asset-loader" role="status" aria-live="polite">
+      <div class="loader-card">
+        <div class="loader-spinner" aria-hidden="true"></div>
+        <div class="loader-title">Loading RailSight assets</div>
+        <div class="loader-status" id="loader-status">Preparing 3D train model...</div>
+      </div>
+    </div>
+    <div class="progress-bar"></div>
+    <div class="canvas-shell" id="canvas-container"></div>
+
+    <nav class="nav" aria-label="Primary navigation">
+      <div class="nav-links">
+        <a href="#story">Pipeline</a>
+        <a href="#dashboard">Dashboard</a>
+        <a href="#architecture">Architecture</a>
+      </div>
+    </nav>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-copy reveal">
+          <span class="pill">Live telemetry simulation</span>
+          <h1>RailSight</h1>
+          <p>Real-Time Field Asset Monitoring and AI-Assisted Troubleshooting for Railway Operations</p>
+          <div class="cta-row">
+            <a class="button" href="https://github.com/Not-Nimna/RailOps-Control-Center">View GitHub Repo</a>
+          </div>
+          <p class="scroll-note">Scroll to follow telemetry from the field edge to the cloud dashboard.</p>
+        </div>
+        <aside class="asset-hud" aria-label="Live asset telemetry preview">
+          <div class="metric-grid">
+            <div class="metric-tile">
+              <span class="metric-label">Speed</span>
+              <span class="metric-value">70.3 km/h</span>
+            </div>
+            <div class="metric-tile">
+              <span class="metric-label">Signal</span>
+              <span class="metric-value">48.7%</span>
+            </div>
+            <div class="metric-tile">
+              <span class="metric-label">GPS</span>
+              <span class="metric-value">51.0774, -113.5386</span>
+            </div>
+            <div class="metric-tile">
+              <span class="metric-label">Battery</span>
+              <span class="metric-value">94.7%</span>
+            </div>
+            <div class="metric-tile">
+              <span class="metric-label">Radio Channel</span>
+              <span class="metric-value">CH-3</span>
+            </div>
+            <div class="metric-tile">
+              <span class="metric-label">Last Seen</span>
+              <span class="metric-value">11:45:39 AM</span>
+            </div>
+          </div>
+          <div class="signal-card">
+            <h4>Signal Strength</h4>
+            <svg class="signal-chart" viewBox="0 0 360 180" role="img" aria-label="Signal strength trend line">
+              <line class="grid-line" x1="44" y1="18" x2="344" y2="18" />
+              <line class="grid-line" x1="44" y1="66" x2="344" y2="66" />
+              <line class="grid-line" x1="44" y1="114" x2="344" y2="114" />
+              <line class="axis" x1="44" y1="18" x2="44" y2="154" />
+              <line class="axis" x1="44" y1="154" x2="344" y2="154" />
+              <text x="8" y="22">100</text>
+              <text x="18" y="70">75</text>
+              <text x="18" y="118">50</text>
+              <text x="24" y="158">0</text>
+              <path class="signal-line" d="M44 112 C70 88, 82 74, 104 70 S142 35, 158 42 S198 62, 222 56 S260 72, 286 70 S326 82, 344 86" />
+            </svg>
+          </div>
+        </aside>
+      </section>
+
+      <section class="section story" id="story">
+        <div class="section-header reveal">
+          <h2>From field telemetry to cloud operations.</h2>
+          <p>RailSight models the path a field asset update takes from a simulated railway device to a live operator dashboard.</p>
+        </div>
+        <div class="track-story">
+          <div class="track-line" aria-hidden="true"></div>
+          <article class="story-card reveal" data-stop="01">
+            <h3>Field Asset Simulation</h3>
+            <p>Thirty simulated railway assets generate realistic UDP telemetry every 10 seconds, including signal strength, GPS position, speed, battery level, radio channel, and operational status.</p>
+          </article>
+          <article class="story-card reveal" data-stop="02">
+            <h3>Edge Gateway</h3>
+            <p>A Python edge gateway receives raw UDP packets, validates the schema, filters malformed events, and converts telemetry into MQTT messages.</p>
+          </article>
+          <article class="story-card reveal" data-stop="03">
+            <h3>Cloud Ingestion</h3>
+            <p>MQTT telemetry is published over TLS to AWS IoT Core, where IoT Rules route events into Lambda and DynamoDB.</p>
+          </article>
+          <article class="story-card reveal" data-stop="04">
+            <h3>Real-Time Operations Dashboard</h3>
+            <p>FastAPI reads the latest asset state and pushes live updates over WebSocket to a React dashboard with maps, charts, alerts, and incident timelines.</p>
+          </article>
+          <article class="story-card reveal" data-stop="05">
+            <h3>AI-Assisted Troubleshooting</h3>
+            <p>An AI assistant uses structured telemetry, CloudWatch logs, and S3 runbooks to help operators investigate incidents faster.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="dashboard">
+        <div class="section-header reveal">
+          <h2>Single-Pane-of-Glass Railway Monitoring</h2>
+          <p>RailSight gives operators a live view of field assets across Alberta, including asset health, signal trends, GPS position, severity-ranked alerts, and incident timelines.</p>
+        </div>
+        <div class="showcase-frame reveal">
+          <img class="showcase-image" src="dashboard.png" alt="RailSight live dashboard with map, alert feed, signal chart, and incident timeline" />
+          <span class="callout">Live Leaflet map</span>
+          <span class="callout">P1/P2/P3 alert feed</span>
+          <span class="callout">Signal history chart</span>
+          <span class="callout">Asset status cards</span>
+          <span class="callout">WebSocket updates</span>
+          <span class="callout">Incident timeline</span>
+        </div>
+      </section>
+
+      <section class="section" id="architecture">
+        <div class="section-header reveal">
+          <h2>Hybrid Edge-to-Cloud Architecture</h2>
+          <p>RailSight mirrors a realistic railway telemetry pipeline: UDP at the edge, MQTT into AWS IoT Core, Lambda-based event processing, DynamoDB state storage, and a FastAPI WebSocket backend powering a React control center.</p>
+        </div>
+        <div class="showcase-frame architecture-shot reveal">
+          <img class="showcase-image" src="architechture.png" alt="RailSight hybrid edge-to-cloud architecture diagram" />
+        </div>
+        <div class="architecture-flow">
+          <article class="flow-card reveal">
+            <small>01</small>
+            <h3>Python Asset Simulator</h3>
+            <p>Threads simulate locomotives, detectors, radios, and track sensors.</p>
+          </article>
+          <article class="flow-card reveal">
+            <small>02</small>
+            <h3>Python Edge Gateway</h3>
+            <p>Validates UDP packets and republishes MQTT telemetry.</p>
+          </article>
+          <article class="flow-card reveal">
+            <small>03</small>
+            <h3>AWS IoT Core</h3>
+            <p>Receives TLS-secured MQTT events and applies routing rules.</p>
+          </article>
+          <article class="flow-card reveal">
+            <small>04</small>
+            <h3>Lambda Processor</h3>
+            <p>Stores telemetry, updates assets, and generates alerts.</p>
+          </article>
+          <article class="flow-card reveal">
+            <small>05</small>
+            <h3>DynamoDB Tables</h3>
+            <p>Persist asset state, telemetry history, and alert records.</p>
+          </article>
+          <article class="flow-card reveal">
+            <small>06</small>
+            <h3>FastAPI Backend</h3>
+            <p>Serves REST endpoints and live WebSocket updates.</p>
+          </article>
+          <article class="flow-card reveal">
+            <small>07</small>
+            <h3>React Dashboard</h3>
+            <p>Displays map, alert feed, charts, and incident timelines.</p>
+          </article>
+          <article class="flow-card reveal">
+            <small>08</small>
+            <h3>AI Assistant</h3>
+            <p>Uses logs, telemetry, and runbooks to guide investigations.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="two-col">
+          <div class="section-header reveal">
+            <p class="eyebrow">What it does</p>
+            <h2>Railway telemetry, modeled end to end.</h2>
+            <p>
+              RailSight simulates railway field assets such as locomotives, wayside detectors, radios, and track sensors sending UDP telemetry to a Python edge gateway. The gateway validates each packet, converts UDP telemetry into MQTT messages, and
+              republishes them to AWS IoT Core. Cloud-side IoT Rules route telemetry into Lambda and DynamoDB, while a FastAPI WebSocket backend serves a live React dashboard with AI-assisted incident troubleshooting from CloudWatch logs and S3
+              runbooks.
+            </p>
+          </div>
+          <div class="section-header reveal">
+            <p class="eyebrow">Why I built it</p>
+            <h2>Operational thinking, not just UI.</h2>
+            <p>I wanted to build something that reflected how railway field systems actually work: telemetry at the edge, protocol translation through a gateway, cloud-based monitoring, and operator-focused troubleshooting.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header reveal">
+          <p class="eyebrow">Features</p>
+          <h2>Built for live railway operations visibility.</h2>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card reveal">
+            <h3>Live Asset Map</h3>
+            <p>Color-coded railway assets displayed on a Leaflet map centered on Alberta.</p>
+          </article>
+          <article class="feature-card reveal">
+            <h3>Real-Time Alert Engine</h3>
+            <p>P1, P2, and P3 alerts generated from signal drops, unexpected stops, duplicate telemetry, and offline assets.</p>
+          </article>
+          <article class="feature-card reveal">
+            <h3>Incident Timeline</h3>
+            <p>Per-asset event history showing how an issue developed over time.</p>
+          </article>
+          <article class="feature-card reveal">
+            <h3>AI Troubleshooting Assistant</h3>
+            <p>Under development: AI-assisted investigation using telemetry, CloudWatch logs, and S3 runbooks.</p>
+          </article>
+          <article class="feature-card reveal">
+            <h3>Health-Check Automation</h3>
+            <p>Under development: Bash and AWS CLI script to check local services and AWS resources.</p>
+          </article>
+          <article class="feature-card reveal">
+            <h3>Analytics Dashboard</h3>
+            <p>Under development: trend views for signal history, asset reliability, and alert patterns.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header reveal">
+          <p class="eyebrow">Tech stack</p>
+          <h2>System layers across edge, cloud, and UI.</h2>
+        </div>
+        <div class="stack-grid">
+          <article class="stack-card reveal">
+            <small>Asset Simulator</small>
+            <h3>Python UDP sockets, threading</h3>
+          </article>
+          <article class="stack-card reveal">
+            <small>Edge Gateway</small>
+            <h3>Python, AWS IoT Device SDK, MQTT over TLS</h3>
+          </article>
+          <article class="stack-card reveal">
+            <small>Cloud Ingestion</small>
+            <h3>AWS IoT Core</h3>
+          </article>
+          <article class="stack-card reveal">
+            <small>Alert Engine</small>
+            <h3>Python Lambda, EventBridge Scheduler</h3>
+          </article>
+          <article class="stack-card reveal">
+            <small>Asset State</small>
+            <h3>DynamoDB railsight-assets</h3>
+          </article>
+          <article class="stack-card reveal">
+            <small>Telemetry History</small>
+            <h3>DynamoDB railsight-telemetry with 24-hour TTL</h3>
+          </article>
+          <article class="stack-card reveal">
+            <small>Alerts Store</small>
+            <h3>DynamoDB railsight-alerts</h3>
+          </article>
+          <article class="stack-card reveal">
+            <small>Device State</small>
+            <h3>AWS IoT Device Shadows</h3>
+          </article>
+          <article class="stack-card reveal">
+            <small>Runbooks</small>
+            <h3>S3 railsight-runbooks</h3>
+          </article>
+          <article class="stack-card reveal">
+            <small>Logging</small>
+            <h3>CloudWatch Logs and Log Insights</h3>
+          </article>
+          <article class="stack-card reveal">
+            <small>API</small>
+            <h3>Python FastAPI REST + WebSocket</h3>
+          </article>
+          <article class="stack-card reveal">
+            <small>Frontend</small>
+            <h3>React, TypeScript, Leaflet.js, Recharts</h3>
+          </article>
+          <article class="stack-card reveal">
+            <small>AI Assistant</small>
+            <h3>Claude API</h3>
+          </article>
+          <article class="stack-card reveal">
+            <small>Automation</small>
+            <h3>Bash and AWS CLI</h3>
+          </article>
+          <article class="stack-card reveal">
+            <small>Orchestration</small>
+            <h3>Docker Compose</h3>
+          </article>
+          <article class="stack-card reveal">
+            <small>AWS Region</small>
+            <h3>ca-central-1</h3>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header reveal">
+          <p class="eyebrow">Project impact</p>
+          <h2>Built to Demonstrate Real Operational Thinking</h2>
+          <p>RailSight was built as a portfolio project to demonstrate practical software engineering across networking, cloud infrastructure, backend systems, real-time dashboards, and incident-focused user experience.</p>
+        </div>
+        <div class="impact-grid">
+          <article class="impact-card reveal">
+            <h3>Edge telemetry ingestion</h3>
+            <p>Models field packets using UDP and a local gateway boundary.</p>
+          </article>
+          <article class="impact-card reveal">
+            <h3>UDP to MQTT translation</h3>
+            <p>Bridges lightweight field telemetry into cloud-native IoT ingestion.</p>
+          </article>
+          <article class="impact-card reveal">
+            <h3>Serverless alert processing</h3>
+            <p>Uses Lambda and DynamoDB to persist state and detect incidents.</p>
+          </article>
+          <article class="impact-card reveal">
+            <h3>Live WebSocket dashboard</h3>
+            <p>Streams operational state into a real-time control-center UI.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-header reveal">
+          <p class="eyebrow">FAQ</p>
+          <h2>Common questions.</h2>
+        </div>
+        <details class="reveal">
+          <summary>Is RailSight connected to real railway assets?</summary>
+          <p>No. RailSight uses simulated telemetry to model how railway field assets could report operational state into a cloud monitoring platform.</p>
+        </details>
+        <details class="reveal">
+          <summary>Why use UDP at the edge?</summary>
+          <p>UDP models lightweight field telemetry where devices send frequent status packets to a local gateway. The gateway then validates and republishes events into a reliable cloud ingestion path.</p>
+        </details>
+        <details class="reveal">
+          <summary>Why AWS IoT Core?</summary>
+          <p>AWS IoT Core provides MQTT-based ingestion, TLS security, device shadows, and IoT Rules for routing telemetry into serverless processing.</p>
+        </details>
+        <details class="reveal">
+          <summary>What makes this project realistic?</summary>
+          <p>The system includes edge simulation, protocol translation, cloud event routing, live WebSocket updates, alert severity, asset state, telemetry history, and troubleshooting workflows.</p>
+        </details>
+        <details class="reveal">
+          <summary>What is still under development?</summary>
+          <p>The AI troubleshooting assistant, Bash health-check automation, and analytics dashboard are currently under development.</p>
+        </details>
+      </section>
+
+      <section class="section final">
+        <div class="horizon" aria-hidden="true"></div>
+        <div class="section-header reveal">
+          <h2>Built for real-time infrastructure visibility.</h2>
+          <p>RailSight brings together edge telemetry, AWS serverless systems, live dashboards, and AI-assisted troubleshooting into one railway operations control center.</p>
+          <div class="cta-row" style="justify-content: center">
+            <a class="button" href="https://github.com/Not-Nimna/RailOps-Control-Center">View GitHub Repo</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module">
+      import * as THREE from "three";
+      import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+      const scene = new THREE.Scene();
+      scene.fog = new THREE.Fog(0x071014, 6, 24);
+
+      const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 1000);
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      document.getElementById("canvas-container").appendChild(renderer.domElement);
+      const clock = new THREE.Clock();
+      const animationMixers = [];
+      const wheelMeshes = [];
+
+      const ambientLight = new THREE.AmbientLight(0x9ed9e6, 1.25);
+      scene.add(ambientLight);
+      const keyLight = new THREE.DirectionalLight(0xffffff, 2.4);
+      keyLight.position.set(4, 6, 5);
+      scene.add(keyLight);
+      const cyanLight = new THREE.PointLight(0x7de7ff, 3.8, 18);
+      cyanLight.position.set(0, 1.6, 3);
+      scene.add(cyanLight);
+
+      const railScene = new THREE.Group();
+      const trackGroup = new THREE.Group();
+      const railMaterial = new THREE.MeshStandardMaterial({ color: 0x6df0ff, emissive: 0x1f91a8, metalness: 0.75, roughness: 0.24 });
+      const tieMaterial = new THREE.MeshStandardMaterial({ color: 0x1c2e36, metalness: 0.25, roughness: 0.8 });
+
+      [-0.36, 0.36].forEach((x) => {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 18), railMaterial);
+        rail.position.set(x, -1.22, -3.5);
+        trackGroup.add(rail);
+      });
+
+      for (let i = 0; i < 34; i++) {
+        const tie = new THREE.Mesh(new THREE.BoxGeometry(1.18, 0.07, 0.12), tieMaterial);
+        tie.position.set(0, -1.27, 4.5 - i * 0.5);
+        trackGroup.add(tie);
+      }
+
+      railScene.add(trackGroup);
+      scene.add(railScene);
+
+      camera.position.set(0, 2, 5.4);
+
+      gsap.registerPlugin(ScrollTrigger);
+
+      const TRAIN_RAIL_OFFSET_X = 0;
+      const TRAIN_RAIL_OFFSET_Y = -1.22;
+      const TRAIN_RAIL_OFFSET_Z = 0.15;
+
+      function createTrainRig(model) {
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        const maxDimension = Math.max(size.x, size.y, size.z);
+        const scale = 9 / maxDimension;
+        const rig = new THREE.Group();
+
+        model.scale.setScalar(scale);
+        model.position.set(-center.x * scale, -box.min.y * scale, -center.z * scale);
+
+        rig.add(model);
+        rig.position.set(TRAIN_RAIL_OFFSET_X, TRAIN_RAIL_OFFSET_Y, TRAIN_RAIL_OFFSET_Z);
+        rig.rotation.y = Math.PI / 2;
+
+        return rig;
+      }
+
+      function initScrollAnimation(trainRig) {
+        railScene.add(trainRig);
+
+        const tl = gsap.timeline({
+          scrollTrigger: {
+            trigger: "main",
+            start: "top top",
+            end: "bottom bottom",
+            scrub: 1,
+          },
+        });
+
+        tl.set(railScene.position, { x: 0, y: 0, z: 0 })
+          .set(railScene.rotation, { y: 0 })
+          .set(trainRig.position, { x: TRAIN_RAIL_OFFSET_X, y: TRAIN_RAIL_OFFSET_Y, z: TRAIN_RAIL_OFFSET_Z })
+          .set(trainRig.rotation, { y: Math.PI / 2 })
+          .set(camera.position, { x: -1.1, y: 2.05, z: 5.4 })
+          .to(railScene.position, { x: -2.5, z: 0.2, ease: "none" })
+          .to(railScene.rotation, { y: -Math.PI / 6, ease: "none" }, "<")
+          .to(trainRig.rotation, { y: Math.PI / 2, ease: "none" }, "<")
+          .to(camera.position, { x: 0.55, y: 2.15, z: 5.65, ease: "none" }, "<")
+          .to(railScene.position, { x: 2.45, z: 0.05, ease: "none" })
+          .to(railScene.rotation, { y: Math.PI / 5, ease: "none" }, "<")
+          .to(trainRig.rotation, { y: Math.PI / 2, ease: "none" }, "<")
+          .to(camera.position, { x: -0.45, y: 2.1, z: 5.95, ease: "none" }, "<")
+          .to(railScene.position, { x: 0, y: 0, z: 0.1, ease: "none" })
+          .to(railScene.rotation, { y: 0, ease: "none" }, "<")
+          .to(trainRig.rotation, { y: Math.PI / 2, ease: "none" }, "<")
+          .to(camera.position, { x: 1.05, y: 2.15, z: 5.55, ease: "none" }, "<");
+      }
+
+      function collectWheelMeshes(model) {
+        wheelMeshes.length = 0;
+
+        model.traverse((object) => {
+          if (!object.isMesh) {
+            return;
+          }
+
+          const name = object.name.toLowerCase();
+          const parentName = object.parent?.name?.toLowerCase() ?? "";
+          const isNamedWheel = /wheel|tyre|tire/.test(`${name} ${parentName}`);
+
+          if (isNamedWheel) {
+            object.geometry.computeBoundingBox();
+            const size = object.geometry.boundingBox.getSize(new THREE.Vector3());
+            const axis =
+              size.x <= size.y && size.x <= size.z
+                ? "x"
+                : size.y <= size.x && size.y <= size.z
+                  ? "y"
+                  : "z";
+
+            object.userData.spinAxis = axis;
+            wheelMeshes.push(object);
+          }
+        });
+
+        console.info(`Detected ${wheelMeshes.length} train wheel meshes for fallback animation.`);
+      }
+
+      function playEmbeddedAnimations(gltf) {
+        if (!gltf.animations.length) {
+          console.info("No embedded GLB animations found. Using fallback wheel animation if wheel meshes are detectable.");
+          return false;
+        }
+
+        const mixer = new THREE.AnimationMixer(gltf.scene);
+        gltf.animations.forEach((clip) => mixer.clipAction(clip).play());
+        animationMixers.push(mixer);
+        console.info(`Playing ${gltf.animations.length} embedded GLB animation clip(s).`);
+        return true;
+      }
+
+      new GLTFLoader().load(
+        "queensland_railways_bb1814_betty_steam_train.glb",
+        (gltf) => {
+          const hasEmbeddedAnimations = playEmbeddedAnimations(gltf);
+
+          if (!hasEmbeddedAnimations) {
+            collectWheelMeshes(gltf.scene);
+          }
+
+          const trainRig = createTrainRig(gltf.scene);
+          initScrollAnimation(trainRig);
+          document.getElementById("loader-status").textContent = "Ready";
+          window.setTimeout(() => {
+            document.getElementById("asset-loader").classList.add("is-hidden");
+          }, 250);
+        },
+        (event) => {
+          if (!event.total) {
+            return;
+          }
+
+          const percent = Math.round((event.loaded / event.total) * 100);
+          document.getElementById("loader-status").textContent = `Loading 3D train model... ${percent}%`;
+        },
+        (error) => {
+          console.error("Train model failed to load:", error);
+          document.getElementById("loader-status").textContent = "Train model failed to load. Please refresh.";
+        },
+      );
+
+      gsap.utils.toArray(".reveal").forEach((element) => {
+        gsap.fromTo(
+          element,
+          { opacity: 0, y: 32 },
+          {
+            opacity: 1,
+            y: 0,
+            duration: 0.8,
+            ease: "power2.out",
+            scrollTrigger: {
+              trigger: element,
+              start: "top 84%",
+            },
+          },
+        );
+      });
+
+      gsap.to(".progress-bar", {
+        width: "100%",
+        ease: "none",
+        scrollTrigger: { scrub: 0.3 },
+      });
+
+      window.addEventListener("resize", () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      function animate() {
+        requestAnimationFrame(animate);
+        const delta = clock.getDelta();
+
+        animationMixers.forEach((mixer) => mixer.update(delta));
+        wheelMeshes.forEach((wheel) => {
+          const axis = wheel.userData.spinAxis ?? "z";
+          wheel.rotation[axis] += delta * 5;
+        });
+
+        trackGroup.position.z = (performance.now() * 0.00025) % 0.5;
+        renderer.render(scene, camera);
+      }
+
+      animate();
+    </script>
+  </body>
+</html>
